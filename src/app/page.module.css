@@ -26,8 +26,12 @@
 
 /* Features */
 .features { max-width: 1200px; margin: 0 auto; padding: 60px 24px 80px; }
-.featureGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
-.feature { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; transition: border-color 0.3s; }
+.featureGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.feature { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; transition: border-color 0.3s; display: flex; flex-direction: column; }
+.feature p { flex: 1; }
+
+@media (max-width: 900px) { .featureGrid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .featureGrid { grid-template-columns: 1fr; } }
 .feature:hover { border-color: var(--accent); }
 .featureIcon { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent-light); margin-bottom: 14px; }
 .feature h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
