@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@vercel/analytics": "^1.6.1",
+    "katex": "^0.16.28",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

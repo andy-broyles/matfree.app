@@ -221,6 +221,12 @@ doc('datestr', "datestr(datenum)", 'Convert date number to string', 'Utility')
 doc('clock', 'clock', 'Current date/time as [Y M D H M S] vector', 'Utility')
 doc('subplot', 'subplot(rows, cols, idx)', 'Create subplot in grid layout', 'Plotting')
 doc('text', "text(x, y, 'str')", 'Add text annotation at (x,y) on plot', 'Plotting')
+doc('surf', 'surf(X, Y, Z)', '3D surface plot with Viridis colormap and mouse rotation', '3D Plotting', ["[X,Y]=meshgrid(linspace(-2,2,30)); Z=sin(X.^2+Y.^2); surf(X,Y,Z)"])
+doc('mesh', 'mesh(X, Y, Z)', '3D wireframe mesh plot with mouse rotation', '3D Plotting')
+doc('contour', 'contour(X, Y, Z)', '2D contour plot with marching squares', '3D Plotting')
+doc('plot3', 'plot3(x, y, z)', '3D parametric line plot', '3D Plotting', ["t=linspace(0,10*pi,500); plot3(cos(t),sin(t),t)"])
+doc('to_python', "to_python('code')", 'Transpile MatFree code to Python (NumPy/SciPy/matplotlib)', 'Utility')
+doc('to_julia', "to_julia('code')", 'Transpile MatFree code to Julia', 'Utility')
 
 export function getHelp(name: string): HelpEntry | undefined { return docs.get(name) }
 export function getAllHelp(): HelpEntry[] { return [...docs.values()] }

@@ -473,6 +473,78 @@ reg('clock', () => {
   return Value.fromMatrix(new Matrix(1, 6, [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()]))
 })
 
+// ═══════════════════════════════════════════════════════════════
+// 3D PLOTS
+// ═══════════════════════════════════════════════════════════════
+
+reg('surf', (a, interp) => {
+  const X = mat(a[0]), Y = mat(a[1]), Z = mat(a[2])
+  const data = build3DGrid(X, Y, Z)
+  interp.print(`__plot3d:${JSON.stringify({ type: 'surf', ...data, title: 'Surface Plot' })}\n`)
+  return Value.empty()
+})
+
+reg('mesh', (a, interp) => {
+  const X = mat(a[0]), Y = mat(a[1]), Z = mat(a[2])
+  const data = build3DGrid(X, Y, Z)
+  interp.print(`__plot3d:${JSON.stringify({ type: 'mesh', ...data, title: 'Mesh Plot' })}\n`)
+  return Value.empty()
+})
+
+reg('contour', (a, interp) => {
+  const X = mat(a[0]), Y = mat(a[1]), Z = mat(a[2])
+  const data = build3DGrid(X, Y, Z)
+  interp.print(`__plot3d:${JSON.stringify({ type: 'contour', ...data, title: 'Contour Plot' })}\n`)
+  return Value.empty()
+})
+
+reg('plot3', (a, interp) => {
+  const x = mat(a[0]).data, y = mat(a[1]).data, z = mat(a[2]).data
+  interp.print(`__plot3d:${JSON.stringify({ type: 'plot3', x, y, z, title: '3D Line Plot' })}\n`)
+  return Value.empty()
+})
+
+function build3DGrid(X: Matrix, Y: Matrix, Z: Matrix) {
+  const rows = X.rows, cols = X.cols
+  const Xg: number[][] = [], Yg: number[][] = [], Zg: number[][] = []
+  for (let i = 0; i < rows; i++) {
+    const xr: number[] = [], yr: number[] = [], zr: number[] = []
+    for (let j = 0; j < cols; j++) { xr.push(X.get(i, j)); yr.push(Y.get(i, j)); zr.push(Z.get(i, j)) }
+    Xg.push(xr); Yg.push(yr); Zg.push(zr)
+  }
+  return { X: Xg, Y: Yg, Z: Zg }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CODE TRANSPILER (built-in functions)
+// ═══════════════════════════════════════════════════════════════
+
+reg('to_python', (a, interp) => {
+  try {
+    const { toPython } = require('./transpiler')
+    const code = a[0].string()
+    const py = toPython(code)
+    interp.print(py + '\n')
+    return Value.fromString(py)
+  } catch (e: any) {
+    interp.print(`Transpiler error: ${e.message}\n`)
+    return Value.empty()
+  }
+})
+
+reg('to_julia', (a, interp) => {
+  try {
+    const { toJulia } = require('./transpiler')
+    const code = a[0].string()
+    const jl = toJulia(code)
+    interp.print(jl + '\n')
+    return Value.fromString(jl)
+  } catch (e: any) {
+    interp.print(`Transpiler error: ${e.message}\n`)
+    return Value.empty()
+  }
+})
+
 export function getAdvancedBuiltin(name: string): BFn | undefined { return fns.get(name) }
 export function hasAdvancedBuiltin(name: string): boolean { return fns.has(name) }
 export function allAdvancedNames(): string[] { return [...fns.keys()] }

@@ -7,15 +7,24 @@ import { Interpreter, LexerError, ParseError, RuntimeError } from '@/engine'
 import type { PlotFigure, HelpEntry } from '@/engine'
 import type { Environment } from '@/engine/environment'
 import PlotCanvas from '@/components/PlotCanvas'
+import Plot3D from '@/components/Plot3D'
+import type { Plot3DData } from '@/components/Plot3D'
 import VariableExplorer from '@/components/VariableExplorer'
 import CommandPalette from '@/components/CommandPalette'
 import Autocomplete from '@/components/Autocomplete'
+import AIAssistant from '@/components/AIAssistant'
+import FileTree from '@/components/FileTree'
+import type { MFFile } from '@/components/FileTree'
+import { toPython, toJulia } from '@/engine/transpiler'
+import katex from 'katex'
 
 interface OutputItem {
-  type: 'input' | 'output' | 'error' | 'plot' | 'info' | 'audio'
+  type: 'input' | 'output' | 'error' | 'plot' | 'info' | 'audio' | 'plot3d' | 'latex'
   text?: string
   figure?: PlotFigure
   audioSrc?: string
+  plot3d?: Plot3DData
+  html?: string
 }
 
 const EXAMPLES = [
@@ -46,6 +55,12 @@ const EXAMPLES = [
     { name: 'Interpolation', code: "x = [0 1 2 3 4 5];\ny = [0 0.84 0.91 0.14 -0.76 -0.96];\nxq = linspace(0, 5, 100);\nyq = spline(x, y, xq);\nhold('on')\nscatter(x, y, 6)\nplot(xq, yq, 'r')\nlegend('Data', 'Cubic Spline')\ntitle('Spline Interpolation')" },
     { name: 'Integration', code: "% Numerical integration\nresult1 = integral(@(x) sin(x), 0, pi);\nfprintf('integral(sin, 0, pi) = %f\\n', result1)\n\nresult2 = integral(@(x) exp(-x.^2), -10, 10);\nfprintf('integral(exp(-x^2), -inf, inf) ≈ %f\\n', result2)\nfprintf('sqrt(pi) = %f\\n', sqrt(pi))" },
     { name: 'Normal Dist', code: "x = linspace(-4, 4, 200);\ny1 = normpdf(x, 0, 1);\ny2 = normpdf(x, 0, 0.5);\ny3 = normpdf(x, 1, 1.5);\nhold('on')\nplot(x, y1)\nplot(x, y2)\nplot(x, y3)\nlegend('N(0,1)', 'N(0,0.25)', 'N(1,2.25)')\ntitle('Normal Distributions')" },
+  ]},
+  { cat: '3D Plots', items: [
+    { name: 'Surface Plot', code: "[X, Y] = meshgrid(linspace(-2, 2, 30));\nZ = sin(X.^2 + Y.^2) .* exp(-0.3*(X.^2 + Y.^2));\nsurf(X, Y, Z)" },
+    { name: 'Mesh Plot', code: "[X, Y] = meshgrid(linspace(-3, 3, 25));\nZ = X .* exp(-X.^2 - Y.^2);\nmesh(X, Y, Z)" },
+    { name: 'Contour Plot', code: "[X, Y] = meshgrid(linspace(-3, 3, 40));\nZ = sin(X) .* cos(Y);\ncontour(X, Y, Z)" },
+    { name: '3D Helix', code: "t = linspace(0, 10*pi, 500);\nx = cos(t); y = sin(t); z = t / (10*pi);\nplot3(x, y, z)" },
   ]},
   { cat: 'Signal & Audio', items: [
     { name: 'Window Functions', code: "n = 64;\nhold('on')\nplot(hamming(n))\nplot(hanning(n))\nplot(blackman(n))\nplot(bartlett(n))\nlegend('Hamming', 'Hanning', 'Blackman', 'Bartlett')\ntitle('Window Functions')" },
@@ -96,6 +111,10 @@ function PlaygroundInner() {
   const [acIdx, setAcIdx] = useState(0)
   const [acWord, setAcWord] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
+  const [showAI, setShowAI] = useState(false)
+  const [showFiles, setShowFiles] = useState(false)
+  const [fileName, setFileName] = useState('untitled.m')
+  const [exportLang, setExportLang] = useState<string | null>(null)
 
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
@@ -106,6 +125,21 @@ function PlaygroundInner() {
     interp.setOutput((text) => {
       if (text.startsWith('__audio:')) {
         setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
+      } else if (text.startsWith('__plot3d:')) {
+        try { const d = JSON.parse(text.slice(9).trim()); setItems(prev => [...prev, { type: 'plot3d', plot3d: d }]) } catch { setItems(prev => [...prev, { type: 'output', text }]) }
+      } else if (text.includes('__sym:')) {
+        const m = text.match(/__sym:(.+)/)
+        if (m) {
+          try {
+            let latex = m[1].trim()
+            latex = latex.replace(/\bsin\b/g, '\\sin').replace(/\bcos\b/g, '\\cos').replace(/\btan\b/g, '\\tan')
+            latex = latex.replace(/\bexp\b/g, '\\exp').replace(/\bln\b/g, '\\ln').replace(/\blog\b/g, '\\log')
+            latex = latex.replace(/\bsqrt\b/g, '\\sqrt').replace(/\bpi\b/g, '\\pi')
+            latex = latex.replace(/\^(\w)/g, '^{$1}').replace(/\*/g, ' \\cdot ')
+            const html = katex.renderToString(latex, { throwOnError: false, displayMode: true })
+            setItems(prev => [...prev, { type: 'latex', html }])
+          } catch { setItems(prev => [...prev, { type: 'output', text }]) }
+        } else { setItems(prev => [...prev, { type: 'output', text }]) }
       } else {
         setItems(prev => [...prev, { type: 'output', text }])
       }
@@ -115,7 +149,7 @@ function PlaygroundInner() {
     try { const h = localStorage.getItem('mf_history'); if (h) setHistory(JSON.parse(h)) } catch {}
     try { const c = localStorage.getItem('mf_editor'); if (c) setEditorCode(c) } catch {}
     setItems([
-      { type: 'output', text: 'MatFree v0.4.0 \u2014 Free Scientific Computing Environment\n' },
+      { type: 'output', text: 'MatFree v0.5.0 \u2014 Free Scientific Computing Environment\n' },
       { type: 'info', text: 'Ctrl+K: Command palette  |  Tab: Autocomplete  |  help(\'topic\'): Documentation\n\n' },
     ])
     const initialCode = searchParams.get('code')
@@ -226,6 +260,7 @@ function PlaygroundInner() {
     const interp = new Interpreter()
     interp.setOutput((text) => {
       if (text.startsWith('__audio:')) setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
+      else if (text.startsWith('__plot3d:')) { try { const d = JSON.parse(text.slice(9).trim()); setItems(prev => [...prev, { type: 'plot3d', plot3d: d }]) } catch {} }
       else setItems(prev => [...prev, { type: 'output', text }])
     })
     interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: JSON.parse(JSON.stringify(fig)) }]))
@@ -276,12 +311,24 @@ function PlaygroundInner() {
           <button className={`${styles.tab} ${isEditorMode ? styles.tabActive : ''}`} onClick={() => setIsEditorMode(true)}>Editor</button>
         </div>
         <div className={styles.headerActions}>
+          <button className={styles.actionBtn} onClick={() => setShowAI(v => !v)} title="AI Assistant">
+            {showAI ? 'Hide AI' : 'AI'}
+          </button>
           <button className={styles.actionBtn} onClick={() => setCmdPaletteOpen(true)} title="Command Palette (Ctrl+K)">
             Search
+          </button>
+          <button className={styles.actionBtn} onClick={() => setShowFiles(v => !v)} title="File browser">
+            Files
           </button>
           <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)}>
             {showVars ? 'Hide Vars' : 'Vars'}
           </button>
+          <button className={styles.actionBtn} onClick={() => {
+            setExportLang(exportLang ? null : 'python')
+          }} title="Export to Python/Julia">
+            Export
+          </button>
+          <a href="/notebook" className={styles.actionBtn} style={{ textDecoration: 'none' }}>Notebook</a>
           <button className={styles.actionBtn} onClick={() => setShowShortcuts(s => !s)}>Keys</button>
           <button className={styles.actionBtn} onClick={() => shareCode(isEditorMode ? editorCode : input)}>
             {shareMsg || 'Share'}
@@ -298,16 +345,28 @@ function PlaygroundInner() {
       )}
 
       <div className={styles.body}>
-        <aside className={styles.sidebar}>
-          {EXAMPLES.map((cat, ci) => (
-            <div key={ci} className={styles.sideSection}>
-              <h3>{cat.cat}</h3>
-              {cat.items.map((ex, i) => (
-                <button key={i} className={styles.exBtn} onClick={() => handleExampleClick(ex.code)}>{ex.name}</button>
-              ))}
-            </div>
-          ))}
-        </aside>
+        {showFiles ? (
+          <aside className={styles.sidebar}>
+            <FileTree
+              visible={showFiles}
+              onOpen={(f: MFFile) => { setEditorCode(f.content); setIsEditorMode(true) }}
+              currentCode={editorCode}
+              currentName={fileName}
+              onNameChange={setFileName}
+            />
+          </aside>
+        ) : (
+          <aside className={styles.sidebar}>
+            {EXAMPLES.map((cat, ci) => (
+              <div key={ci} className={styles.sideSection}>
+                <h3>{cat.cat}</h3>
+                {cat.items.map((ex, i) => (
+                  <button key={i} className={styles.exBtn} onClick={() => handleExampleClick(ex.code)}>{ex.name}</button>
+                ))}
+              </div>
+            ))}
+          </aside>
+        )}
 
         <div
           className={`${styles.mainArea} ${isDragOver ? styles.dragOver : ''}`}
@@ -344,6 +403,8 @@ function PlaygroundInner() {
           <div className={`${styles.terminal} ${isEditorMode ? styles.terminalSplit : ''}`} ref={termRef} onClick={() => inputRef.current?.focus()}>
             {items.map((item, i) => {
               if (item.type === 'plot' && item.figure) return <div key={i} className={styles.plotWrap}><PlotCanvas figure={item.figure} /></div>
+              if (item.type === 'plot3d' && item.plot3d) return <div key={i} className={styles.plotWrap}><Plot3D data={item.plot3d} /></div>
+              if (item.type === 'latex' && item.html) return <div key={i} className={styles.latexWrap} dangerouslySetInnerHTML={{ __html: item.html }} />
               if (item.type === 'audio' && item.audioSrc) return (
                 <div key={i} className={styles.audioWrap}>
                   <span style={{ color: '#22c55e', fontSize: 12, marginRight: 8 }}>Audio</span>
@@ -395,6 +456,37 @@ function PlaygroundInner() {
         onSelect={handleCmdSelect}
         onRun={executeCode}
       />
+
+      <AIAssistant
+        visible={showAI}
+        onClose={() => setShowAI(false)}
+        onRunCode={executeCode}
+      />
+
+      {exportLang && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setExportLang(null)}>
+          <div style={{ background: '#13131d', border: '1px solid #3a3a52', borderRadius: 12, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 20 }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ margin: 0, color: '#e4e4ef', fontSize: 16 }}>Export Code</h3>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setExportLang('python')} style={{ padding: '4px 12px', borderRadius: 6, border: exportLang === 'python' ? '1px solid #4f46e5' : '1px solid #3a3a52', background: exportLang === 'python' ? 'rgba(79,70,229,0.15)' : 'transparent', color: '#e4e4ef', cursor: 'pointer', fontSize: 12 }}>Python</button>
+                <button onClick={() => setExportLang('julia')} style={{ padding: '4px 12px', borderRadius: 6, border: exportLang === 'julia' ? '1px solid #22c55e' : '1px solid #3a3a52', background: exportLang === 'julia' ? 'rgba(34,197,94,0.15)' : 'transparent', color: '#e4e4ef', cursor: 'pointer', fontSize: 12 }}>Julia</button>
+              </div>
+            </div>
+            <pre style={{ background: '#0a0a0f', padding: 16, borderRadius: 8, color: '#c4c4d8', fontSize: 13, fontFamily: 'var(--font-mono)', lineHeight: 1.5, overflow: 'auto', whiteSpace: 'pre-wrap', maxHeight: 400 }}>
+              {(() => { try { return exportLang === 'julia' ? toJulia(editorCode || 'x = 1') : toPython(editorCode || 'x = 1') } catch (e: any) { return `% Export error: ${e.message}\n% Make sure your code is valid.` } })()}
+            </pre>
+            <button onClick={() => {
+              try {
+                const code = exportLang === 'julia' ? toJulia(editorCode || 'x = 1') : toPython(editorCode || 'x = 1')
+                navigator.clipboard.writeText(code)
+              } catch {}
+            }} style={{ marginTop: 8, background: '#4f46e5', border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Copy to Clipboard</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
