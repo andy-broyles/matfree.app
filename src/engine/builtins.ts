@@ -3,6 +3,8 @@
 import { Value, Matrix, RuntimeError, CellArray } from './value'
 import type { Interpreter } from './interpreter'
 import { getScientificBuiltin, hasScientificBuiltin, allScientificNames } from './scientific'
+import { getSymbolicBuiltin, hasSymbolicBuiltin, allSymbolicNames } from './symbolic'
+import { getAdvancedBuiltin, hasAdvancedBuiltin, allAdvancedNames } from './advanced'
 
 type BuiltinFn = (args: Value[], interp: Interpreter) => Value
 
@@ -592,13 +594,16 @@ reg('doc', (a, interp) => {
 })
 
 export function getBuiltin(name: string): BuiltinFn | undefined {
-  return builtins.get(name) ?? (getScientificBuiltin(name) as BuiltinFn | undefined)
+  return builtins.get(name) ??
+    (getScientificBuiltin(name) as BuiltinFn | undefined) ??
+    (getSymbolicBuiltin(name) as BuiltinFn | undefined) ??
+    (getAdvancedBuiltin(name) as BuiltinFn | undefined)
 }
 export function hasBuiltin(name: string): boolean {
-  return builtins.has(name) || hasScientificBuiltin(name)
+  return builtins.has(name) || hasScientificBuiltin(name) || hasSymbolicBuiltin(name) || hasAdvancedBuiltin(name)
 }
 export function allBuiltinNames(): string[] {
-  return [...builtins.keys(), ...allScientificNames()]
+  return [...builtins.keys(), ...allScientificNames(), ...allSymbolicNames(), ...allAdvancedNames()]
 }
 
 function applyElem(v: Value, fn: (x: number) => number): Value {

@@ -12,13 +12,24 @@ interface Props {
 const DARK = {
   bg: '#13131d', axis: '#3a3a52', grid: '#1e1e2e', text: '#a0a0b8',
   titleText: '#e4e4ef', tick: '#666680', plotBg: '#0e0e16',
+  crosshair: 'rgba(99,102,241,0.4)', zoomBox: 'rgba(99,102,241,0.15)',
+  zoomBorder: 'rgba(99,102,241,0.6)', annotBg: '#1e1e2e',
 }
+
+type ZoomState = { xMin: number; xMax: number; yMin: number; yMax: number } | null
 
 export default function PlotCanvas({ figure }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [dims, setDims] = useState({ w: figure.width, h: figure.height })
+  const [zoom, setZoom] = useState<ZoomState>(null)
+  const [zoomStack, setZoomStack] = useState<ZoomState[]>([])
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null)
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState<{ mx: number; my: number; zoom: ZoomState } | null>(null)
+  const [crosshair, setCrosshair] = useState<{ x: number; y: number; dataX: number; dataY: number } | null>(null)
 
   // Responsive resize
   useEffect(() => {
@@ -31,6 +42,29 @@ export default function PlotCanvas({ figure }: Props) {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  // Reset zoom when figure changes
+  useEffect(() => { setZoom(null); setZoomStack([]) }, [figure])
+
+  const getPadding = useCallback(() => {
+    const pad = { top: 48, right: 24, bottom: 52, left: 64 }
+    if (figure.title) pad.top = 56
+    if (figure.legend && figure.series.some(s => s.label)) pad.right = 140
+    return pad
+  }, [figure])
+
+  const getBounds = useCallback(() => {
+    if (zoom) return zoom
+    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity
+    for (const s of figure.series) {
+      for (const v of s.x) { if (isFinite(v)) { xMin = Math.min(xMin, v); xMax = Math.max(xMax, v) } }
+      for (const v of s.y) { if (isFinite(v)) { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v) } }
+    }
+    if (figure.xRange) { xMin = figure.xRange[0]; xMax = figure.xRange[1] }
+    if (figure.yRange) { yMin = figure.yRange[0]; yMax = figure.yRange[1] }
+    const xPad = (xMax - xMin) * 0.05 || 1, yPad = (yMax - yMin) * 0.08 || 1
+    return { xMin: xMin - xPad, xMax: xMax + xPad, yMin: yMin - yPad, yMax: yMax + yPad }
+  }, [figure, zoom])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -45,9 +79,7 @@ export default function PlotCanvas({ figure }: Props) {
     ctx.scale(dpr, dpr)
 
     const W = dims.w, H = dims.h
-    const pad = { top: 48, right: 24, bottom: 52, left: 64 }
-    if (figure.title) pad.top = 56
-    if (figure.legend && figure.series.some(s => s.label)) pad.right = 140
+    const pad = getPadding()
     const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom
 
     // Background
@@ -86,30 +118,23 @@ export default function PlotCanvas({ figure }: Props) {
       ctx.fillStyle = DARK.text; ctx.font = '10px var(--font-mono, monospace)'; ctx.textAlign = 'left'
       ctx.fillText(formatTick(maxV), cbX + cbW + 4, pad.top + 10)
       ctx.fillText(formatTick(minV), cbX + cbW + 4, pad.top + ph)
-      // Title
       if (figure.title) { ctx.fillStyle = DARK.titleText; ctx.font = 'bold 15px var(--font-sans, sans-serif)'; ctx.textAlign = 'center'; ctx.fillText(figure.title, pad.left + pw / 2, 28) }
       return
     }
 
-    // Compute data bounds
-    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity
-    for (const s of figure.series) {
-      for (const v of s.x) { if (isFinite(v)) { xMin = Math.min(xMin, v); xMax = Math.max(xMax, v) } }
-      for (const v of s.y) { if (isFinite(v)) { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v) } }
-    }
-    if (figure.xRange) { xMin = figure.xRange[0]; xMax = figure.xRange[1] }
-    if (figure.yRange) { yMin = figure.yRange[0]; yMax = figure.yRange[1] }
-    // Padding
-    const xPad = (xMax - xMin) * 0.05 || 1, yPad = (yMax - yMin) * 0.08 || 1
-    xMin -= xPad; xMax += xPad; yMin -= yPad; yMax += yPad
-
+    const bounds = getBounds()
+    const { xMin, xMax, yMin, yMax } = bounds
     const toX = (v: number) => pad.left + ((v - xMin) / (xMax - xMin)) * pw
     const toY = (v: number) => pad.top + ph - ((v - yMin) / (yMax - yMin)) * ph
 
     // Grid
     if (figure.grid) {
-      const xTicks = niceScale(xMin + xPad, xMax - xPad, 8)
-      const yTicks = niceScale(yMin + yPad, yMax - yPad, 6)
+      const baseXMin = zoom ? xMin : xMin + (xMax - xMin) * 0.05
+      const baseXMax = zoom ? xMax : xMax - (xMax - xMin) * 0.05
+      const baseYMin = zoom ? yMin : yMin + (yMax - yMin) * 0.08
+      const baseYMax = zoom ? yMax : yMax - (yMax - yMin) * 0.08
+      const xTicks = niceScale(baseXMin, baseXMax, 8)
+      const yTicks = niceScale(baseYMin, baseYMax, 6)
       ctx.strokeStyle = DARK.grid; ctx.lineWidth = 1
       for (const t of xTicks) { const x = toX(t); ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke() }
       for (const t of yTicks) { const y = toY(t); ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke() }
@@ -126,14 +151,13 @@ export default function PlotCanvas({ figure }: Props) {
     ctx.strokeRect(pad.left, pad.top, pw, ph)
 
     // Draw series
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(pad.left, pad.top, pw, ph)
+    ctx.clip()
     figure.series.forEach((s, i) => {
       const color = s.color || PALETTE[i % PALETTE.length]
       const lw = s.lineWidth ?? 2
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(pad.left, pad.top, pw, ph)
-      ctx.clip()
-
       switch (s.type) {
         case 'line': drawLine(ctx, s, toX, toY, color, lw); break
         case 'scatter': drawScatter(ctx, s, toX, toY, color, s.markerSize ?? 4); break
@@ -143,8 +167,23 @@ export default function PlotCanvas({ figure }: Props) {
         case 'area': drawArea(ctx, s, toX, toY, pad.top + ph, color, lw, s.fillAlpha ?? 0.3); break
         case 'hist': drawBar(ctx, s, toX, toY, pad.top + ph, color, 1, 0); break
       }
-      ctx.restore()
     })
+    ctx.restore()
+
+    // Annotations
+    const annotations = (figure as any).__annotations as { x: number; y: number; text: string }[] | undefined
+    if (annotations) {
+      ctx.font = '12px var(--font-sans, sans-serif)'
+      for (const ann of annotations) {
+        const px = toX(ann.x), py = toY(ann.y)
+        const tw = ctx.measureText(ann.text).width
+        ctx.fillStyle = DARK.annotBg; ctx.globalAlpha = 0.85
+        roundRect(ctx, px - 2, py - 14, tw + 8, 18, 4); ctx.fill()
+        ctx.globalAlpha = 1
+        ctx.fillStyle = '#e4e4ef'
+        ctx.textAlign = 'left'; ctx.fillText(ann.text, px + 2, py)
+      }
+    }
 
     // Title
     if (figure.title) {
@@ -166,7 +205,7 @@ export default function PlotCanvas({ figure }: Props) {
       const legendX = pad.left + pw + 12, legendY = pad.top + 8
       ctx.font = '11px var(--font-sans, sans-serif)'
       figure.series.forEach((s, i) => {
-        if (!s.label) return
+        if (!s.label || s.label === '__heatmap__') return
         const color = s.color || PALETTE[i % PALETTE.length]
         const y = legendY + i * 20
         ctx.fillStyle = color; ctx.fillRect(legendX, y, 14, 3)
@@ -175,34 +214,161 @@ export default function PlotCanvas({ figure }: Props) {
         ctx.fillText(s.label, legendX + 20, y + 5)
       })
     }
-  }, [figure, dims])
+
+    // Crosshair
+    if (crosshair) {
+      const { x, y } = crosshair
+      if (x >= pad.left && x <= pad.left + pw && y >= pad.top && y <= pad.top + ph) {
+        ctx.strokeStyle = DARK.crosshair; ctx.lineWidth = 1; ctx.setLineDash([4, 3])
+        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke()
+        ctx.setLineDash([])
+      }
+    }
+
+    // Zoom selection box
+    if (dragStart && dragCurrent && !isPanning) {
+      const x1 = Math.min(dragStart.x, dragCurrent.x), y1 = Math.min(dragStart.y, dragCurrent.y)
+      const x2 = Math.max(dragStart.x, dragCurrent.x), y2 = Math.max(dragStart.y, dragCurrent.y)
+      ctx.fillStyle = DARK.zoomBox
+      ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
+      ctx.strokeStyle = DARK.zoomBorder; ctx.lineWidth = 1
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+    }
+
+    // Zoom indicator
+    if (zoom) {
+      ctx.fillStyle = 'rgba(99,102,241,0.7)'; ctx.font = '10px var(--font-mono, monospace)'; ctx.textAlign = 'left'
+      ctx.fillText('Zoomed (dbl-click to reset)', pad.left + 4, pad.top + 14)
+    }
+  }, [figure, dims, zoom, crosshair, dragStart, dragCurrent, isPanning, getPadding, getBounds])
 
   useEffect(() => { draw() }, [draw])
+
+  const pixToData = useCallback((mx: number, my: number) => {
+    const pad = getPadding()
+    const pw = dims.w - pad.left - pad.right, ph = dims.h - pad.top - pad.bottom
+    const bounds = getBounds()
+    const dataX = bounds.xMin + ((mx - pad.left) / pw) * (bounds.xMax - bounds.xMin)
+    const dataY = bounds.yMax - ((my - pad.top) / ph) * (bounds.yMax - bounds.yMin)
+    return { dataX, dataY }
+  }, [dims, getPadding, getBounds])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current
     if (!canvas || figure.series.length === 0) return
     const rect = canvas.getBoundingClientRect()
     const mx = e.clientX - rect.left, my = e.clientY - rect.top
-    // Simple nearest point tooltip
+
+    // Crosshair tracking
+    const { dataX, dataY } = pixToData(mx, my)
+    setCrosshair({ x: mx, y: my, dataX, dataY })
+
+    // Pan
+    if (isPanning && panStart && panStart.zoom) {
+      const dxPix = mx - panStart.mx, dyPix = my - panStart.my
+      const pad = getPadding()
+      const pw = dims.w - pad.left - pad.right, ph = dims.h - pad.top - pad.bottom
+      const z = panStart.zoom
+      const dxData = -dxPix / pw * (z.xMax - z.xMin)
+      const dyData = dyPix / ph * (z.yMax - z.yMin)
+      setZoom({ xMin: z.xMin + dxData, xMax: z.xMax + dxData, yMin: z.yMin + dyData, yMax: z.yMax + dyData })
+      return
+    }
+
+    // Drag (zoom selection)
+    if (dragStart) {
+      setDragCurrent({ x: mx, y: my })
+      return
+    }
+
+    // Tooltip: nearest point
     let best = Infinity, bestText = ''
+    const bounds = getBounds()
+    const pad = getPadding()
+    const pw = dims.w - pad.left - pad.right, ph = dims.h - pad.top - pad.bottom
+    const toX = (v: number) => pad.left + ((v - bounds.xMin) / (bounds.xMax - bounds.xMin)) * pw
+    const toY = (v: number) => pad.top + ph - ((v - bounds.yMin) / (bounds.yMax - bounds.yMin)) * ph
     for (const s of figure.series) {
+      if (s.label === '__heatmap__') continue
       for (let i = 0; i < s.x.length; i++) {
-        const pad = { top: 48, left: 64 }
-        const pw = dims.w - 88, ph = dims.h - 100
-        let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity
-        for (const v of s.x) { if (isFinite(v)) { xMin = Math.min(xMin, v); xMax = Math.max(xMax, v) } }
-        for (const v of s.y) { if (isFinite(v)) { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v) } }
-        const xPd = (xMax - xMin) * 0.05 || 1, yPd = (yMax - yMin) * 0.08 || 1
-        xMin -= xPd; xMax += xPd; yMin -= yPd; yMax += yPd
-        const px = pad.left + ((s.x[i] - xMin) / (xMax - xMin)) * pw
-        const py = pad.top + ph - ((s.y[i] - yMin) / (yMax - yMin)) * ph
+        const px = toX(s.x[i]), py = toY(s.y[i])
         const d = Math.hypot(mx - px, my - py)
-        if (d < best && d < 20) { best = d; bestText = `(${fmtVal(s.x[i])}, ${fmtVal(s.y[i])})` }
+        if (d < best && d < 20) {
+          best = d
+          bestText = s.label ? `${s.label}: (${fmtVal(s.x[i])}, ${fmtVal(s.y[i])})` : `(${fmtVal(s.x[i])}, ${fmtVal(s.y[i])})`
+        }
       }
     }
     setTooltip(bestText ? { x: mx, y: my, text: bestText } : null)
-  }, [figure, dims])
+  }, [figure, dims, dragStart, isPanning, panStart, pixToData, getPadding, getBounds])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top
+    const pad = getPadding()
+    const pw = dims.w - pad.left - pad.right, ph = dims.h - pad.top - pad.bottom
+    if (mx < pad.left || mx > pad.left + pw || my < pad.top || my > pad.top + ph) return
+
+    if (e.button === 1 || e.shiftKey) {
+      // Middle mouse or shift+click = pan
+      e.preventDefault()
+      setIsPanning(true)
+      setPanStart({ mx, my, zoom: zoom || getBounds() })
+    } else if (e.button === 0) {
+      // Left click = zoom selection
+      setDragStart({ x: mx, y: my })
+      setDragCurrent({ x: mx, y: my })
+    }
+  }, [dims, zoom, getPadding, getBounds])
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (isPanning) { setIsPanning(false); setPanStart(null); return }
+    if (!dragStart || !dragCurrent) return
+
+    const dx = Math.abs(dragCurrent.x - dragStart.x)
+    const dy = Math.abs(dragCurrent.y - dragStart.y)
+    setDragStart(null); setDragCurrent(null)
+
+    if (dx < 5 && dy < 5) return // Too small, not a zoom
+
+    const x1 = Math.min(dragStart.x, dragCurrent.x)
+    const y1 = Math.min(dragStart.y, dragCurrent.y)
+    const x2 = Math.max(dragStart.x, dragCurrent.x)
+    const y2 = Math.max(dragStart.y, dragCurrent.y)
+    const d1 = pixToData(x1, y2) // bottom-left
+    const d2 = pixToData(x2, y1) // top-right
+    setZoomStack(prev => [...prev, zoom])
+    setZoom({ xMin: d1.dataX, xMax: d2.dataX, yMin: d1.dataY, yMax: d2.dataY })
+  }, [dragStart, dragCurrent, isPanning, pixToData, zoom])
+
+  const handleDoubleClick = useCallback(() => {
+    if (zoomStack.length > 0) {
+      setZoom(zoomStack[zoomStack.length - 1])
+      setZoomStack(prev => prev.slice(0, -1))
+    } else {
+      setZoom(null)
+    }
+  }, [zoomStack])
+
+  // Mouse wheel zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top
+    const { dataX, dataY } = pixToData(mx, my)
+    const bounds = zoom || getBounds()
+    const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2
+    const newXMin = dataX - (dataX - bounds.xMin) * factor
+    const newXMax = dataX + (bounds.xMax - dataX) * factor
+    const newYMin = dataY - (dataY - bounds.yMin) * factor
+    const newYMax = dataY + (bounds.yMax - dataY) * factor
+    setZoom({ xMin: newXMin, xMax: newXMax, yMin: newYMin, yMax: newYMax })
+  }, [zoom, pixToData, getBounds])
 
   const exportPNG = useCallback(() => {
     const canvas = canvasRef.current
@@ -213,13 +379,32 @@ export default function PlotCanvas({ figure }: Props) {
     link.click()
   }, [figure.id])
 
+  const exportSVG = useCallback(() => {
+    // Quick CSV export of the data
+    let csv = ''
+    for (const s of figure.series) {
+      csv += `# ${s.label || 'series'}\nx,y\n`
+      for (let i = 0; i < s.x.length; i++) csv += `${s.x[i]},${s.y[i]}\n`
+      csv += '\n'
+    }
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const link = document.createElement('a')
+    link.download = `matfree-data-${figure.id}.csv`
+    link.href = URL.createObjectURL(blob)
+    link.click()
+  }, [figure])
+
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%', maxWidth: 800 }}>
       <canvas
         ref={canvasRef}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setTooltip(null)}
-        style={{ display: 'block', borderRadius: 8, cursor: 'crosshair' }}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { setTooltip(null); setCrosshair(null); setDragStart(null); setIsPanning(false) }}
+        onDoubleClick={handleDoubleClick}
+        onWheel={handleWheel}
+        style={{ display: 'block', borderRadius: 8, cursor: isPanning ? 'grabbing' : dragStart ? 'crosshair' : 'crosshair' }}
       />
       {tooltip && (
         <div style={{
@@ -227,13 +412,23 @@ export default function PlotCanvas({ figure }: Props) {
           background: '#1e1e2e', color: '#e4e4ef', padding: '4px 10px',
           borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-mono)',
           pointerEvents: 'none', border: '1px solid #3a3a52', whiteSpace: 'nowrap',
+          zIndex: 10,
         }}>{tooltip.text}</div>
       )}
-      <button onClick={exportPNG} style={{
-        position: 'absolute', top: 6, right: 6, background: 'rgba(30,30,46,0.85)',
-        border: '1px solid #3a3a52', color: '#a0a0b8', padding: '3px 10px',
-        borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
-      }} title="Download as PNG">PNG</button>
+      <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 4 }}>
+        <button onClick={exportPNG} style={{
+          background: 'rgba(30,30,46,0.85)', border: '1px solid #3a3a52', color: '#a0a0b8',
+          padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+        }} title="Download as PNG">PNG</button>
+        <button onClick={exportSVG} style={{
+          background: 'rgba(30,30,46,0.85)', border: '1px solid #3a3a52', color: '#a0a0b8',
+          padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+        }} title="Export data as CSV">CSV</button>
+        {zoom && <button onClick={() => { setZoom(null); setZoomStack([]) }} style={{
+          background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(99,102,241,0.4)', color: '#818cf8',
+          padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+        }} title="Reset zoom">Reset</button>}
+      </div>
     </div>
   )
 }
@@ -252,7 +447,6 @@ function drawLine(ctx: CanvasRenderingContext2D, s: PlotSeries, toX: (v: number)
     else ctx.lineTo(toX(s.x[i]), toY(s.y[i]))
   }
   ctx.stroke(); ctx.setLineDash([])
-  // Draw markers if set
   if (s.marker && s.marker !== 'none') drawMarkers(ctx, s, toX, toY, color, s.markerSize ?? 3)
 }
 
@@ -302,13 +496,11 @@ function drawStairs(ctx: CanvasRenderingContext2D, s: PlotSeries, toX: (v: numbe
 }
 
 function drawArea(ctx: CanvasRenderingContext2D, s: PlotSeries, toX: (v: number) => number, toY: (v: number) => number, baseline: number, color: string, lw: number, alpha: number) {
-  // Fill
   ctx.fillStyle = color; ctx.globalAlpha = alpha
   ctx.beginPath(); ctx.moveTo(toX(s.x[0]), baseline)
   for (let i = 0; i < s.x.length; i++) ctx.lineTo(toX(s.x[i]), toY(s.y[i]))
   ctx.lineTo(toX(s.x[s.x.length - 1]), baseline); ctx.closePath(); ctx.fill()
   ctx.globalAlpha = 1
-  // Line on top
   drawLine(ctx, s, toX, toY, color, lw)
 }
 
@@ -367,7 +559,6 @@ function fmtVal(v: number): string {
 // Viridis colormap (perceptually uniform, colorblind-friendly)
 function viridis(t: number): string {
   t = Math.max(0, Math.min(1, t))
-  // Simplified viridis LUT (16 stops)
   const colors: [number, number, number][] = [
     [68, 1, 84], [72, 23, 105], [72, 43, 115], [67, 62, 133],
     [57, 82, 139], [47, 100, 142], [38, 118, 142], [31, 135, 141],

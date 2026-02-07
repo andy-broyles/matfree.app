@@ -12,9 +12,10 @@ import CommandPalette from '@/components/CommandPalette'
 import Autocomplete from '@/components/Autocomplete'
 
 interface OutputItem {
-  type: 'input' | 'output' | 'error' | 'plot' | 'info'
+  type: 'input' | 'output' | 'error' | 'plot' | 'info' | 'audio'
   text?: string
   figure?: PlotFigure
+  audioSrc?: string
 }
 
 const EXAMPLES = [
@@ -28,6 +29,14 @@ const EXAMPLES = [
     { name: 'Heatmap', code: "A = magic(12);\nimagesc(A)\ntitle('Magic Square Heatmap')" },
     { name: 'Line Styles', code: "x = linspace(0, 2*pi, 50);\nhold('on')\nplot(x, sin(x), 'b')\nplot(x, sin(x + pi/4), 'r--')\nplot(x, sin(x + pi/2), 'g:')\nlegend('Phase 0', 'Phase 45', 'Phase 90')\ntitle('Phase Shifted Waves')" },
   ]},
+  { cat: 'Symbolic Math', items: [
+    { name: 'Differentiation', code: "% Symbolic differentiation\nsymdiff('x^3 + 2*x^2 - 5*x + 1', 'x')\n\n% Chain rule\nsymdiff('sin(x^2)', 'x')\n\n% Second derivative\nsymdiff('x^3 + 2*x^2 - 5*x + 1', 'x', 2)" },
+    { name: 'Integration', code: "% Symbolic integration\nsymint('x^2', 'x')\nsymint('sin(x)', 'x')\nsymint('exp(x)', 'x')\nsymint('1/x', 'x')" },
+    { name: 'Solve Equations', code: "% Solve x^2 - 5x + 6 = 0\nsymsolve('x^2 - 5*x + 6', 'x')\n\n% Solve cubic\nsymsolve('x^3 - 6*x^2 + 11*x - 6', 'x')" },
+    { name: 'Taylor Series', code: "% Taylor expansion of sin(x) around 0, order 7\nsymtaylor('sin(x)', 'x', 0, 7)\n\n% Taylor expansion of exp(x)\nsymtaylor('exp(x)', 'x', 0, 5)" },
+    { name: 'Simplify/Expand', code: "% Expand (x+1)^3\nsymexpand('(x+1)^3')\n\n% Simplify\nsymsimplify('x^2 + 2*x + 1')" },
+    { name: 'Sym Plot', code: "% Plot a symbolic expression\nsymplot('sin(x)/x', 'x', [-10 10])" },
+  ]},
   { cat: 'Scientific', items: [
     { name: 'FFT Spectrum', code: "fs = 100; t = linspace(0, 1, fs);\nx = sin(2*pi*10*t) + 0.5*sin(2*pi*25*t);\nX = abs_fft(x);\nplot(X)\ntitle('Frequency Spectrum')\nxlabel('Frequency bin')" },
     { name: 'ODE Solver', code: "% Solve y' = -0.5*y, y(0) = 2\nresult = ode45(@(t,y) -0.5*y, [0 10], [2]);\nt = result{1}; y = result{2};\nplot(t, y)\ntitle('Exponential Decay (ODE45)')\nxlabel('Time')\nylabel('y(t)')" },
@@ -38,13 +47,23 @@ const EXAMPLES = [
     { name: 'Integration', code: "% Numerical integration\nresult1 = integral(@(x) sin(x), 0, pi);\nfprintf('integral(sin, 0, pi) = %f\\n', result1)\n\nresult2 = integral(@(x) exp(-x.^2), -10, 10);\nfprintf('integral(exp(-x^2), -inf, inf) ≈ %f\\n', result2)\nfprintf('sqrt(pi) = %f\\n', sqrt(pi))" },
     { name: 'Normal Dist', code: "x = linspace(-4, 4, 200);\ny1 = normpdf(x, 0, 1);\ny2 = normpdf(x, 0, 0.5);\ny3 = normpdf(x, 1, 1.5);\nhold('on')\nplot(x, y1)\nplot(x, y2)\nplot(x, y3)\nlegend('N(0,1)', 'N(0,0.25)', 'N(1,2.25)')\ntitle('Normal Distributions')" },
   ]},
+  { cat: 'Signal & Audio', items: [
+    { name: 'Window Functions', code: "n = 64;\nhold('on')\nplot(hamming(n))\nplot(hanning(n))\nplot(blackman(n))\nplot(bartlett(n))\nlegend('Hamming', 'Hanning', 'Blackman', 'Bartlett')\ntitle('Window Functions')" },
+    { name: 'Chirp Signal', code: "t = linspace(0, 1, 8000);\ny = chirp(t, 20, 1, 2000);\nplot(t, y)\ntitle('Chirp Signal (20Hz to 2000Hz)')\nxlabel('Time (s)')" },
+    { name: 'Audio Synthesis', code: "% Generate a 440Hz tone (A4 note)\nfs = 8192;\nt = linspace(0, 0.5, fs/2);\ny = 0.5 * sin(2*pi*440*t);\nsound(y, fs)" },
+    { name: 'Waveforms', code: "t = linspace(0, 4*pi, 500);\nhold('on')\nplot(t, sin(t))\nplot(t, sawtooth(t))\nplot(t, square(t))\nlegend('Sine', 'Sawtooth', 'Square')\ntitle('Waveform Comparison')" },
+    { name: 'Cross-Corr', code: "x = [zeros(1, 20) ones(1, 10) zeros(1, 20)];\ny = [zeros(1, 25) ones(1, 10) zeros(1, 15)];\nr = xcorr(x, y);\nplot(r)\ntitle('Cross-Correlation')\nxlabel('Lag')" },
+  ]},
   { cat: 'Math & LA', items: [
     { name: 'Matrix Ops', code: 'A = [2 1; 5 3];\nfprintf(\'det(A) = %f\\n\', det(A))\nB = inv(A);\ndisp(B)\ndisp(A * B)' },
     { name: 'Eigenvalues', code: "A = [4 1 2; 1 3 1; 2 1 5];\ne = eig(A);\nfprintf('Eigenvalues: ');\ndisp(e)" },
+    { name: 'Full SVD', code: "A = [1 2; 3 4; 5 6];\nresult = svd_full(A);\nfprintf('U =\\n'); disp(result{1})\nfprintf('S =\\n'); disp(result{2})\nfprintf('V =\\n'); disp(result{3})" },
+    { name: 'Matrix Exp', code: "A = [0 -1; 1 0];\nfprintf('A = rotation matrix:\\n'); disp(A)\nE = expm(A);\nfprintf('expm(A) = [cos(1) -sin(1); sin(1) cos(1)]:\\n');\ndisp(E)" },
     { name: 'LU Factor', code: "A = [2 1 1; 4 3 3; 8 7 9];\nresult = lu(A);\nfprintf('L =\\n'); disp(result{1})\nfprintf('U =\\n'); disp(result{2})" },
     { name: 'Functions', code: 'function result = factorial(n)\n  if n <= 1\n    result = 1;\n  else\n    result = n * factorial(n-1);\n  end\nend\nfor i = 1:12\n  fprintf(\'%2d! = %d\\n\', i, factorial(i))\nend' },
     { name: 'Fibonacci Plot', code: 'n = 25;\nfib = zeros(1, n);\nfib(1) = 1; fib(2) = 1;\nfor i = 3:n\n  fib(i) = fib(i-1) + fib(i-2);\nend\nstem(1:n, fib)\ntitle(\'Fibonacci Sequence\')\nxlabel(\'n\')\nylabel(\'F(n)\')' },
-    { name: 'Statistics', code: "data = [4 8 15 16 23 42];\nfprintf('Mean:   %f\\n', mean(data))\nfprintf('Std:    %f\\n', std(data))\nfprintf('Median: %f\\n', median(data))\nfprintf('Var:    %f\\n', var(data))" },
+    { name: 'Primes & Factors', code: "p = primes(100);\nfprintf('Primes up to 100: '); disp(p)\n\nfprintf('\\nPrime factorization of 360: '); disp(factor(360))\n\nfprintf('Is 97 prime? %d\\n', isprime(97))\nfprintf('GCD(48, 36) = %d\\n', gcd(48, 36))\nfprintf('LCM(12, 18) = %d\\n', lcm(12, 18))" },
+    { name: 'Statistics', code: "data = [4 8 15 16 23 42];\nfprintf('Mean:   %f\\n', mean(data))\nfprintf('Std:    %f\\n', std(data))\nfprintf('Median: %f\\n', median(data))\nfprintf('Var:    %f\\n', var(data))\nfprintf('C(42,6) = %d\\n', nchoosek(42, 6))" },
   ]},
 ]
 
@@ -84,13 +103,19 @@ function PlaygroundInner() {
 
   useEffect(() => {
     const interp = new Interpreter()
-    interp.setOutput((text) => setItems(prev => [...prev, { type: 'output', text }]))
+    interp.setOutput((text) => {
+      if (text.startsWith('__audio:')) {
+        setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
+      } else {
+        setItems(prev => [...prev, { type: 'output', text }])
+      }
+    })
     interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: JSON.parse(JSON.stringify(fig)) }]))
     interpRef.current = interp
     try { const h = localStorage.getItem('mf_history'); if (h) setHistory(JSON.parse(h)) } catch {}
     try { const c = localStorage.getItem('mf_editor'); if (c) setEditorCode(c) } catch {}
     setItems([
-      { type: 'output', text: 'MatFree v0.3.0 \u2014 Free Scientific Computing Environment\n' },
+      { type: 'output', text: 'MatFree v0.4.0 \u2014 Free Scientific Computing Environment\n' },
       { type: 'info', text: 'Ctrl+K: Command palette  |  Tab: Autocomplete  |  help(\'topic\'): Documentation\n\n' },
     ])
     const initialCode = searchParams.get('code')
@@ -199,7 +224,10 @@ function PlaygroundInner() {
 
   const resetSession = useCallback(() => {
     const interp = new Interpreter()
-    interp.setOutput((text) => setItems(prev => [...prev, { type: 'output', text }]))
+    interp.setOutput((text) => {
+      if (text.startsWith('__audio:')) setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
+      else setItems(prev => [...prev, { type: 'output', text }])
+    })
     interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: JSON.parse(JSON.stringify(fig)) }]))
     interpRef.current = interp; setItems([]); setEnvSnapshot(null)
   }, [])
@@ -316,6 +344,12 @@ function PlaygroundInner() {
           <div className={`${styles.terminal} ${isEditorMode ? styles.terminalSplit : ''}`} ref={termRef} onClick={() => inputRef.current?.focus()}>
             {items.map((item, i) => {
               if (item.type === 'plot' && item.figure) return <div key={i} className={styles.plotWrap}><PlotCanvas figure={item.figure} /></div>
+              if (item.type === 'audio' && item.audioSrc) return (
+                <div key={i} className={styles.audioWrap}>
+                  <span style={{ color: '#22c55e', fontSize: 12, marginRight: 8 }}>Audio</span>
+                  <audio controls src={item.audioSrc} style={{ height: 28, verticalAlign: 'middle' }} />
+                </div>
+              )
               return (
                 <div key={i} className={`${styles.line} ${styles[item.type]}`}>
                   {item.type === 'input' && <span className={styles.promptChar}>&gt;&gt; </span>}

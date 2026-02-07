@@ -4,10 +4,10 @@ import { useRouter } from 'next/navigation'
 import styles from './page.module.css'
 
 const EXAMPLES = [
-  { title: 'Plot a Sine Wave', code: "x = linspace(0, 4*pi, 200);\nplot(x, sin(x))\ntitle('Sine Wave')\nxlabel('x')\nylabel('sin(x)')" },
-  { title: 'Matrix Operations', code: 'A = [1 2; 3 4];\nB = A * A\ndet(A)\ninv(A)' },
-  { title: 'Statistics & Histogram', code: "data = randn(1, 500);\nhist(data, 25)\ntitle('Normal Distribution')\nfprintf('Mean: %.4f\\n', mean(data))\nfprintf('Std: %.4f\\n', std(data))" },
-  { title: 'Multi-Series Plot', code: "x = linspace(0, 2*pi, 80);\nhold('on')\nplot(x, sin(x))\nplot(x, cos(x))\nlegend('sin(x)', 'cos(x)')\ntitle('Trig Functions')" },
+  { title: 'Symbolic Calculus', code: "% Symbolic differentiation\nsymdiff('x^3 + sin(x^2)', 'x')\n\n% Symbolic integration\nsymint('x^2 * exp(x)', 'x')\n\n% Solve equation\nsymsolve('x^2 - 5*x + 6', 'x')" },
+  { title: 'Interactive Plot', code: "x = linspace(0, 4*pi, 200);\nhold('on')\nplot(x, sin(x))\nplot(x, cos(x))\nlegend('sin(x)', 'cos(x)')\ntitle('Zoom: drag select. Pan: shift+drag')" },
+  { title: 'Audio Synthesis', code: "% Generate and play a chord\nfs = 8192;\nt = linspace(0, 1, fs);\ny = 0.3*sin(2*pi*440*t) + 0.3*sin(2*pi*554*t) + 0.3*sin(2*pi*659*t);\nsound(y, fs)" },
+  { title: 'Matrix Exponential', code: "% Rotation matrix\nA = [0 -1; 1 0];\nE = expm(A);\nfprintf('expm([0 -1; 1 0]):\\n')\ndisp(E)\nfprintf('Should be [cos(1) -sin(1); sin(1) cos(1)]\\n')" },
 ]
 
 export default function Home() {
@@ -37,8 +37,8 @@ export default function Home() {
             <span className={styles.heroAccent}>free and in your browser.</span>
           </h1>
           <p className={styles.heroSub}>
-            MatFree is a free, open-source computing environment for numerical analysis,
-            matrix operations, and data visualization. No installation. No license fees. Just math.
+            Symbolic math, interactive plots, audio synthesis, 200+ built-in functions, and a full
+            scientific computing engine. In your browser. No installation. No license. Just math.
           </p>
           <div className={styles.heroCtas}>
             <button className={styles.ctaPrimary} onClick={() => router.push('/playground')}>
@@ -50,29 +50,29 @@ export default function Home() {
         <section className={styles.features}>
           <div className={styles.featureGrid}>
             <div className={styles.feature}>
-              <div className={styles.featureIcon}>&#x1D400;</div>
-              <h3>Matrix Engine</h3>
-              <p>Dense matrices, linear algebra, broadcasting, and 100+ built-in functions. All running natively in your browser - zero server round trips.</p>
+              <div className={styles.featureIcon}>d/dx</div>
+              <h3>Symbolic Math</h3>
+              <p>Differentiation, integration, equation solving, Taylor series, simplification, and expansion. A full CAS running in your browser.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>{'///'}~</div>
-              <h3>Beautiful Plots</h3>
-              <p>Publication-quality 2D charts: line, scatter, bar, histogram, stem, area, stairs. Interactive tooltips. One-click PNG export. Dark theme by default.</p>
+              <h3>Interactive Plots</h3>
+              <p>Zoom, pan, crosshair tracking. 9 plot types. Annotations. CSV data export. PNG export. Heatmaps with Viridis colormap. All interactive.</p>
+            </div>
+            <div className={styles.feature}>
+              <div className={styles.featureIcon}>&#x1D400;</div>
+              <h3>200+ Functions</h3>
+              <p>FFT, ODE45, splines, optimization, SVD, eigendecomposition, matrix exponential, window functions, signal processing, and more.</p>
+            </div>
+            <div className={styles.feature}>
+              <div className={styles.featureIcon}>&#x266B;</div>
+              <h3>Audio Synthesis</h3>
+              <p>Generate sine, square, sawtooth, and chirp signals. Play them directly in the browser. Build synthesizers, sonify data, teach acoustics.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>{'>'}_</div>
-              <h3>Instant Startup</h3>
-              <p>No 30-second splash screen. No license check. No Java runtime. Open the page and start computing in milliseconds.</p>
-            </div>
-            <div className={styles.feature}>
-              <div className={styles.featureIcon}>{'{ }'}=</div>
               <h3>Live Workspace</h3>
-              <p>Variable explorer shows every variable, its type, size, and value in real-time. Click to inspect. Share your code with a single link.</p>
-            </div>
-            <div className={styles.feature}>
-              <div className={styles.featureIcon}>f(x)</div>
-              <h3>Rich Language</h3>
-              <p>Functions, anonymous functions, closures, structs, cell arrays, control flow, error handling, and a growing standard library of 100+ functions.</p>
+              <p>Command palette, autocomplete, variable explorer, shareable links, session persistence, CSV drag-and-drop import. A real IDE.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>$0</div>

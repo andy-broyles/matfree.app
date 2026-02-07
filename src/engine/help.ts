@@ -163,6 +163,65 @@ doc('whos', 'whos', 'List workspace variables', 'Utility')
 doc('clear', 'clear', 'Clear workspace', 'Utility')
 doc('exist', "exist('name')", 'Check if variable/function exists', 'Utility')
 
+// Symbolic Math
+doc('sym', "sym('expr')", 'Create symbolic expression', 'Symbolic Math')
+doc('symdiff', "symdiff('expr', 'var')", 'Symbolic differentiation with chain rule, product rule, quotient rule', 'Symbolic Math', ["symdiff('x^3', 'x')", "symdiff('sin(x^2)', 'x')", "symdiff('x^3', 'x', 2)"])
+doc('symint', "symint('expr', 'var')", 'Symbolic integration for polynomials, trig, exp, log', 'Symbolic Math', ["symint('x^2', 'x')", "symint('sin(x)', 'x')"])
+doc('symsolve', "symsolve('expr', 'var')", 'Solve equations symbolically (linear, quadratic, polynomial via Newton)', 'Symbolic Math', ["symsolve('x^2 - 5*x + 6', 'x')"])
+doc('symsimplify', "symsimplify('expr')", 'Simplify symbolic expression algebraically', 'Symbolic Math')
+doc('symexpand', "symexpand('expr')", 'Expand symbolic expression (distribute products, powers)', 'Symbolic Math', ["symexpand('(x+1)^3')"])
+doc('symsubs', "symsubs('expr', 'var', val)", 'Substitute variable in symbolic expression', 'Symbolic Math', ["symsubs('x^2 + 1', 'x', 3)"])
+doc('symtaylor', "symtaylor('expr', 'var', center, order)", 'Compute Taylor series expansion', 'Symbolic Math', ["symtaylor('sin(x)', 'x', 0, 7)"])
+doc('symeval', "symeval('expr', 'var', val)", 'Evaluate symbolic expression numerically', 'Symbolic Math')
+doc('symplot', "symplot('expr', 'var', [lo hi])", 'Plot symbolic expression over range', 'Symbolic Math')
+
+// Matrix Functions
+doc('expm', 'expm(A)', 'Matrix exponential via Padé approximation with scaling/squaring', 'Linear Algebra')
+doc('logm', 'logm(A)', 'Matrix logarithm via inverse scaling and squaring', 'Linear Algebra')
+doc('sqrtm', 'sqrtm(A)', 'Matrix square root via Denman-Beavers iteration', 'Linear Algebra')
+doc('eig_full', '[V,D] = eig_full(A)', 'Full eigendecomposition: A*V = V*D (returns {V, D} cell)', 'Linear Algebra')
+doc('svd_full', '[U,S,V] = svd_full(A)', 'Full SVD decomposition (returns {U, S, V} cell)', 'Linear Algebra')
+doc('null_space', 'N = null_space(A)', 'Null space of matrix via SVD', 'Linear Algebra')
+
+// Signal Processing
+doc('hamming', 'hamming(n)', 'Hamming window of length n', 'Signal Processing')
+doc('hanning', 'hanning(n)', 'Hanning (Hann) window of length n', 'Signal Processing')
+doc('blackman', 'blackman(n)', 'Blackman window of length n', 'Signal Processing')
+doc('kaiser', 'kaiser(n, beta)', 'Kaiser window with parameter beta', 'Signal Processing')
+doc('bartlett', 'bartlett(n)', 'Bartlett (triangular) window of length n', 'Signal Processing')
+doc('pwelch', 'pwelch(x, nfft)', 'Power spectral density via Welch method', 'Signal Processing')
+doc('xcorr', 'xcorr(x, y)', 'Cross-correlation of two signals', 'Signal Processing')
+
+// Audio
+doc('sound', 'sound(y, fs)', 'Play audio signal y at sample rate fs (produces inline audio player)', 'Audio')
+doc('sawtooth', 'sawtooth(t)', 'Generate sawtooth wave', 'Audio', ["t = linspace(0, 4*pi, 500); plot(t, sawtooth(t))"])
+doc('square', 'square(t, duty)', 'Generate square wave with optional duty cycle', 'Audio')
+doc('chirp', 'chirp(t, f0, t1, f1)', 'Generate frequency-swept cosine (chirp) signal', 'Audio', ["t = linspace(0,1,8000); y = chirp(t,0,1,500); sound(y,8000)"])
+
+// Regex
+doc('regexp', "regexp(str, pattern)", 'Find pattern matches (returns 1-indexed start positions)', 'String')
+doc('regexpi', "regexpi(str, pattern)", 'Case-insensitive regexp', 'String')
+doc('regexprep', "regexprep(str, pattern, replacement)", 'Replace pattern matches in string', 'String')
+
+// Number Theory & Math
+doc('gcd', 'gcd(a, b)', 'Greatest common divisor', 'Math')
+doc('lcm', 'lcm(a, b)', 'Least common multiple', 'Math')
+doc('nchoosek', 'nchoosek(n, k)', 'Binomial coefficient C(n,k)', 'Math')
+doc('primes', 'primes(n)', 'All primes up to n (Sieve of Eratosthenes)', 'Math')
+doc('isprime', 'isprime(n)', 'Test if n is prime', 'Math')
+doc('factor', 'factor(n)', 'Prime factorization of n', 'Math')
+doc('deg2rad', 'deg2rad(x)', 'Convert degrees to radians', 'Math')
+doc('rad2deg', 'rad2deg(x)', 'Convert radians to degrees', 'Math')
+doc('hypot', 'hypot(a, b)', 'Hypotenuse sqrt(a^2+b^2) without overflow', 'Math')
+
+// Timing
+doc('timeit', 'timeit(@fn)', 'Benchmark function handle, reports average time', 'Utility')
+doc('now', 'now', 'Current date/time as serial date number', 'Utility')
+doc('datestr', "datestr(datenum)", 'Convert date number to string', 'Utility')
+doc('clock', 'clock', 'Current date/time as [Y M D H M S] vector', 'Utility')
+doc('subplot', 'subplot(rows, cols, idx)', 'Create subplot in grid layout', 'Plotting')
+doc('text', "text(x, y, 'str')", 'Add text annotation at (x,y) on plot', 'Plotting')
+
 export function getHelp(name: string): HelpEntry | undefined { return docs.get(name) }
 export function getAllHelp(): HelpEntry[] { return [...docs.values()] }
 export function searchHelp(query: string): HelpEntry[] {
