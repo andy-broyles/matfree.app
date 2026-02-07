@@ -90,7 +90,7 @@ export default function Home() {
       </main>
 
       <footer className={styles.footer}>
-        <p>MatFree is open-source software under the MIT License.</p>
+        <p>&copy; {new Date().getFullYear()} MatFree</p>
       </footer>
     </div>
   )
