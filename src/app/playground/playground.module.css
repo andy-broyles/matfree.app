@@ -58,6 +58,7 @@
 .input { color: var(--accent-light); }
 .output { color: var(--terminal-text); }
 .error { color: var(--red); }
+.info { color: var(--yellow); font-style: italic; opacity: 0.8; }
 .promptChar { color: var(--prompt); font-weight: 700; user-select: none; }
 
 /* Input */
@@ -67,6 +68,10 @@
 
 /* Plot */
 .plotWrap { margin: 8px 0; max-width: 100%; }
+
+/* Drag & Drop */
+.dragOver { position: relative; }
+.dropOverlay { position: absolute; inset: 0; background: rgba(99, 102, 241, 0.15); border: 2px dashed var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; z-index: 50; font-size: 18px; font-weight: 600; color: var(--accent-light); pointer-events: none; }
 
 /* Responsive */
 @media (max-width: 900px) {

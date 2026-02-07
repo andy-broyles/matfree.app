@@ -2,6 +2,7 @@
 
 import { Value, Matrix, RuntimeError, CellArray } from './value'
 import type { Interpreter } from './interpreter'
+import { getScientificBuiltin, hasScientificBuiltin, allScientificNames } from './scientific'
 
 type BuiltinFn = (args: Value[], interp: Interpreter) => Value
 
@@ -479,8 +480,126 @@ reg('close', (_, interp) => {
   const fig = interp.getCurrentFigure(); fig.series = []; interp.emitPlot(); return Value.empty()
 })
 
-export function getBuiltin(name: string): BuiltinFn | undefined { return builtins.get(name) }
-export function hasBuiltin(name: string): boolean { return builtins.has(name) }
+// Log-scale plots
+reg('semilogx', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2 && a[0].isMatrix() && a[1].isMatrix()) { x = mat(a[0]).data.map(Math.log10); y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => Math.log10(i + 1)) }
+  fig.series.push({ type: 'line', x, y }); interp.emitPlot(); return Value.empty()
+})
+reg('semilogy', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = [...mat(a[0]).data]; y = mat(a[1]).data.map(Math.log10) }
+  else { y = mat(a[0]).data.map(Math.log10); x = y.map((_, i) => i + 1) }
+  fig.series.push({ type: 'line', x, y }); interp.emitPlot(); return Value.empty()
+})
+reg('loglog', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = mat(a[0]).data.map(Math.log10); y = mat(a[1]).data.map(Math.log10) }
+  else { y = mat(a[0]).data.map(Math.log10); x = y.map((_, i) => Math.log10(i + 1)) }
+  fig.series.push({ type: 'line', x, y }); interp.emitPlot(); return Value.empty()
+})
+
+// Polar plot (converted to cartesian for rendering)
+reg('polar_plot', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  const theta = mat(a[0]).data, r = mat(a[1]).data
+  const x = theta.map((t, i) => r[i] * Math.cos(t))
+  const y = theta.map((t, i) => r[i] * Math.sin(t))
+  fig.series.push({ type: 'line', x, y }); interp.emitPlot(); return Value.empty()
+})
+
+// Pie chart
+reg('pie_chart', (a, interp) => {
+  const fig = interp.getCurrentFigure(); fig.series = []
+  const data = mat(a[0]).data
+  const total = data.reduce((s, v) => s + v, 0)
+  // Encode as special bar chart with angular data
+  fig.series.push({ type: 'bar', x: data.map((_, i) => i + 1), y: data.map(v => v / total * 100) })
+  fig.title = fig.title ?? 'Pie Chart'
+  interp.emitPlot(); return Value.empty()
+})
+
+// Heatmap / imagesc
+reg('imagesc', (a, interp) => {
+  const fig = interp.getCurrentFigure(); fig.series = []
+  const m = mat(a[0])
+  // Pack matrix data as a special heatmap series
+  fig.series.push({
+    type: 'line', // we'll detect heatmap in renderer via metadata
+    x: Array.from({ length: m.cols }, (_, i) => i + 1),
+    y: Array.from({ length: m.rows }, (_, i) => i + 1),
+    label: '__heatmap__',
+    lineWidth: m.rows,
+    markerSize: m.cols,
+  })
+  // Store raw data on the figure
+  ;(fig as any).__heatmapData = [...m.data]
+  ;(fig as any).__heatmapRows = m.rows
+  ;(fig as any).__heatmapCols = m.cols
+  interp.emitPlot(); return Value.empty()
+})
+
+// Help function
+reg('help', (a, interp) => {
+  if (a.length === 0) {
+    interp.print('MatFree Help System\n')
+    interp.print('  help(\'function_name\')  - Get help for a specific function\n')
+    interp.print('  doc(\'topic\')           - Search documentation\n')
+    interp.print('  whos                   - List workspace variables\n\n')
+    interp.print('Categories: Math, Matrix, Linear Algebra, Statistics, Plotting,\n')
+    interp.print('  Signal Processing, Polynomials, Calculus, Optimization,\n')
+    interp.print('  Special Functions, I/O, Utility\n')
+    return Value.empty()
+  }
+  const name = a[0].isString() ? a[0].string() : ''
+  const { getHelp: gh, searchHelp: sh } = require('./help')
+  const entry = gh(name)
+  if (entry) {
+    interp.print(`\n  ${entry.name} - ${entry.description}\n`)
+    interp.print(`  Syntax: ${entry.syntax}\n`)
+    interp.print(`  Category: ${entry.category}\n`)
+    if (entry.examples?.length) {
+      interp.print(`  Examples:\n`)
+      for (const ex of entry.examples) interp.print(`    ${ex}\n`)
+    }
+    interp.print('\n')
+  } else {
+    const results = sh(name)
+    if (results.length > 0) {
+      interp.print(`  No exact match for '${name}'. Did you mean:\n`)
+      for (const r of results.slice(0, 8)) interp.print(`    ${r.name.padEnd(15)} - ${r.description}\n`)
+      interp.print('\n')
+    } else {
+      interp.print(`  No help found for '${name}'.\n`)
+    }
+  }
+  return Value.empty()
+})
+
+reg('doc', (a, interp) => {
+  const { searchHelp: sh } = require('./help')
+  const query = a.length > 0 ? (a[0].isString() ? a[0].string() : '') : ''
+  const results = sh(query)
+  if (results.length === 0) { interp.print(`  No results for '${query}'.\n`); return Value.empty() }
+  interp.print(`  Found ${results.length} results for '${query}':\n`)
+  for (const r of results.slice(0, 20)) interp.print(`    ${r.name.padEnd(15)} ${r.syntax.padEnd(30)} ${r.description}\n`)
+  interp.print('\n')
+  return Value.empty()
+})
+
+export function getBuiltin(name: string): BuiltinFn | undefined {
+  return builtins.get(name) ?? (getScientificBuiltin(name) as BuiltinFn | undefined)
+}
+export function hasBuiltin(name: string): boolean {
+  return builtins.has(name) || hasScientificBuiltin(name)
+}
+export function allBuiltinNames(): string[] {
+  return [...builtins.keys(), ...allScientificNames()]
+}
 
 function applyElem(v: Value, fn: (x: number) => number): Value {
   const m = mat(v)

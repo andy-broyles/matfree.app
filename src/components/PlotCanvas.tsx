@@ -62,6 +62,35 @@ export default function PlotCanvas({ figure }: Props) {
       ctx.fillText('No data to plot', W / 2, H / 2); return
     }
 
+    // Check for heatmap mode
+    const heatmapData = (figure as any).__heatmapData as number[] | undefined
+    if (heatmapData && figure.series[0]?.label === '__heatmap__') {
+      const nRows = (figure as any).__heatmapRows as number
+      const nCols = (figure as any).__heatmapCols as number
+      const minV = Math.min(...heatmapData), maxV = Math.max(...heatmapData)
+      const range = maxV - minV || 1
+      const cellW = pw / nCols, cellH = ph / nRows
+      for (let r = 0; r < nRows; r++) {
+        for (let c = 0; c < nCols; c++) {
+          const v = (heatmapData[r * nCols + c] - minV) / range
+          ctx.fillStyle = viridis(v)
+          ctx.fillRect(pad.left + c * cellW, pad.top + r * cellH, cellW + 0.5, cellH + 0.5)
+        }
+      }
+      // Colorbar
+      const cbX = pad.left + pw + 8, cbW = 14
+      for (let y = 0; y < ph; y++) {
+        ctx.fillStyle = viridis(1 - y / ph)
+        ctx.fillRect(cbX, pad.top + y, cbW, 1.5)
+      }
+      ctx.fillStyle = DARK.text; ctx.font = '10px var(--font-mono, monospace)'; ctx.textAlign = 'left'
+      ctx.fillText(formatTick(maxV), cbX + cbW + 4, pad.top + 10)
+      ctx.fillText(formatTick(minV), cbX + cbW + 4, pad.top + ph)
+      // Title
+      if (figure.title) { ctx.fillStyle = DARK.titleText; ctx.font = 'bold 15px var(--font-sans, sans-serif)'; ctx.textAlign = 'center'; ctx.fillText(figure.title, pad.left + pw / 2, 28) }
+      return
+    }
+
     // Compute data bounds
     let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity
     for (const s of figure.series) {
@@ -333,4 +362,23 @@ function formatTick(v: number): string {
 function fmtVal(v: number): string {
   if (Number.isInteger(v)) return v.toString()
   return v.toPrecision(6)
+}
+
+// Viridis colormap (perceptually uniform, colorblind-friendly)
+function viridis(t: number): string {
+  t = Math.max(0, Math.min(1, t))
+  // Simplified viridis LUT (16 stops)
+  const colors: [number, number, number][] = [
+    [68, 1, 84], [72, 23, 105], [72, 43, 115], [67, 62, 133],
+    [57, 82, 139], [47, 100, 142], [38, 118, 142], [31, 135, 141],
+    [25, 152, 138], [33, 170, 127], [58, 186, 111], [94, 201, 97],
+    [137, 213, 72], [184, 222, 41], [225, 227, 24], [253, 231, 37],
+  ]
+  const idx = t * (colors.length - 1)
+  const lo = Math.floor(idx), hi = Math.min(lo + 1, colors.length - 1)
+  const f = idx - lo
+  const r = Math.round(colors[lo][0] + f * (colors[hi][0] - colors[lo][0]))
+  const g = Math.round(colors[lo][1] + f * (colors[hi][1] - colors[lo][1]))
+  const b = Math.round(colors[lo][2] + f * (colors[hi][2] - colors[lo][2]))
+  return `rgb(${r},${g},${b})`
 }
