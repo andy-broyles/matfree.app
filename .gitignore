@@ -30,6 +30,11 @@ __pycache__/
 dist/
 *.egg
 
+# Node.js
+node_modules/
+.next/
+out/
+
 # OS files
 .DS_Store
 Thumbs.db
