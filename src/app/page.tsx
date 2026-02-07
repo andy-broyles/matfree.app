@@ -22,7 +22,6 @@ export default function Home() {
             <span className={styles.logoText}>MatFree</span>
           </div>
           <div className={styles.navLinks}>
-            <a href="https://github.com/andy-broyles/matfree.app" target="_blank" rel="noopener">GitHub</a>
             <button className={styles.navCta} onClick={() => router.push('/playground')}>
               Open Playground
             </button>
@@ -45,9 +44,9 @@ export default function Home() {
             <button className={styles.ctaPrimary} onClick={() => router.push('/playground')}>
               Try it now
             </button>
-            <a className={styles.ctaSecondary} href="https://github.com/andy-broyles/matfree.app" target="_blank" rel="noopener">
-              View source
-            </a>
+            <button className={styles.ctaSecondary} onClick={() => router.push('/playground')}>
+              Learn more
+            </button>
           </div>
         </section>
 
@@ -95,7 +94,6 @@ export default function Home() {
 
       <footer className={styles.footer}>
         <p>MatFree is open-source software under the MIT License.</p>
-        <p><a href="https://github.com/andy-broyles/matfree.app" target="_blank" rel="noopener">GitHub</a></p>
       </footer>
     </div>
   )
