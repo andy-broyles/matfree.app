@@ -7,6 +7,8 @@ import { TokenType } from './token'
 import { Value, Matrix, RuntimeError, FuncHandle, CellArray } from './value'
 import { Environment } from './environment'
 import { getBuiltin, hasBuiltin } from './builtins'
+import type { PlotFigure, PlotCallback } from './plot'
+import { createFigure, PALETTE } from './plot'
 
 class BreakSignal { _brand = 'break' as const }
 class ContinueSignal { _brand = 'continue' as const }
@@ -19,6 +21,10 @@ export class Interpreter {
   private env: Environment
   private userFunctions: Map<string, Extract<Stmt, { kind: 'functionDef' }>> = new Map()
   private output: OutputCallback = () => {}
+  // Plotting state
+  private plotCallback: PlotCallback = () => {}
+  private figures: Map<number, PlotFigure> = new Map()
+  private currentFigureId = 1
 
   constructor() {
     this.env = this.globalEnv
@@ -36,9 +42,28 @@ export class Interpreter {
   }
 
   setOutput(cb: OutputCallback) { this.output = cb }
+  setPlotCallback(cb: PlotCallback) { this.plotCallback = cb }
   print(text: string) { this.output(text) }
   currentEnv(): Environment { return this.env }
   getGlobalEnv(): Environment { return this.globalEnv }
+
+  // Plotting API
+  getCurrentFigure(): PlotFigure {
+    if (!this.figures.has(this.currentFigureId)) {
+      this.figures.set(this.currentFigureId, createFigure(this.currentFigureId))
+    }
+    return this.figures.get(this.currentFigureId)!
+  }
+
+  setCurrentFigure(id: number): void {
+    this.currentFigureId = id
+    if (!this.figures.has(id)) this.figures.set(id, createFigure(id))
+  }
+
+  emitPlot(): void {
+    const fig = this.getCurrentFigure()
+    this.plotCallback({ ...fig, series: [...fig.series] })
+  }
 
   execute(code: string): Value {
     const lexer = new Lexer(code)

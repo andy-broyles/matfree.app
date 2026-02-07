@@ -4,44 +4,74 @@ import { useEffect, useRef, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import styles from './playground.module.css'
 import { Interpreter, LexerError, ParseError, RuntimeError } from '@/engine'
+import type { PlotFigure } from '@/engine'
+import type { Environment } from '@/engine/environment'
+import PlotCanvas from '@/components/PlotCanvas'
+import VariableExplorer from '@/components/VariableExplorer'
 
-interface OutputLine {
-  type: 'input' | 'output' | 'error'
-  text: string
+interface OutputItem {
+  type: 'input' | 'output' | 'error' | 'plot'
+  text?: string
+  figure?: PlotFigure
 }
 
 const EXAMPLES = [
-  { name: 'Matrix Basics', code: 'A = [1 2 3; 4 5 6; 7 8 9];\ndisp(A)\nsize(A)' },
-  { name: 'Linear Algebra', code: 'A = [2 1; 5 3];\ndisp(det(A))\nB = inv(A);\ndisp(B)\ndisp(A * B)' },
-  { name: 'Functions', code: 'function result = factorial(n)\n  if n <= 1\n    result = 1;\n  else\n    result = n * factorial(n-1);\n  end\nend\nfactorial(10)' },
-  { name: 'Statistics', code: 'x = [2 4 4 4 5 5 7 9];\nfprintf(\'Mean: %f\\n\', mean(x))\nfprintf(\'Std:  %f\\n\', std(x))\nfprintf(\'Med:  %f\\n\', median(x))' },
-  { name: 'Anonymous Funcs', code: 'square = @(x) x^2;\ncube = @(x) x^3;\nfprintf(\'5^2 = %d\\n\', square(5))\nfprintf(\'3^3 = %d\\n\', cube(3))' },
-  { name: 'Fibonacci', code: 'n = 15;\nfib = zeros(1, n);\nfib(1) = 1; fib(2) = 1;\nfor i = 3:n\n  fib(i) = fib(i-1) + fib(i-2);\nend\ndisp(fib)' },
+  { name: 'Sine Wave Plot', code: "x = linspace(0, 4*pi, 200);\ny = sin(x);\nplot(x, y)\ntitle('Sine Wave')\nxlabel('x')\nylabel('sin(x)')" },
+  { name: 'Multi-Plot', code: "x = linspace(0, 2*pi, 100);\nhold('on')\nplot(x, sin(x))\nplot(x, cos(x))\nplot(x, sin(x).*cos(x))\nlegend('sin', 'cos', 'sin*cos')\ntitle('Trigonometric Functions')" },
+  { name: 'Scatter Plot', code: "x = randn(1, 100);\ny = randn(1, 100);\nscatter(x, y)\ntitle('Random Scatter')\nxlabel('X')\nylabel('Y')" },
+  { name: 'Bar Chart', code: "categories = [1 2 3 4 5 6];\nvalues = [23 45 12 67 34 56];\nbar(categories, values)\ntitle('Sales by Quarter')\nxlabel('Quarter')\nylabel('Revenue ($k)')" },
+  { name: 'Histogram', code: "data = randn(1, 1000);\nhist(data, 30)\ntitle('Normal Distribution')\nxlabel('Value')\nylabel('Frequency')" },
+  { name: 'Stem Plot', code: "n = 0:15;\ny = sin(n * pi / 4);\nstem(n, y)\ntitle('Discrete Signal')\nxlabel('n')\nylabel('Amplitude')" },
+  { name: 'Area Plot', code: "x = linspace(0, 10, 50);\ny = exp(-x/3) .* sin(x);\narea(x, y)\ntitle('Damped Oscillation')\nxlabel('Time')\nylabel('Amplitude')" },
+  { name: 'Matrix Ops', code: 'A = [2 1; 5 3];\nfprintf(\'det(A) = %f\\n\', det(A))\nB = inv(A);\ndisp(B)\ndisp(A * B)' },
+  { name: 'Functions', code: 'function result = factorial(n)\n  if n <= 1\n    result = 1;\n  else\n    result = n * factorial(n-1);\n  end\nend\nfor i = 1:10\n  fprintf(\'%d! = %d\\n\', i, factorial(i))\nend' },
+  { name: 'Statistics', code: "data = [4 8 15 16 23 42];\nfprintf('Mean:   %f\\n', mean(data))\nfprintf('Std:    %f\\n', std(data))\nfprintf('Median: %f\\n', median(data))\nfprintf('Var:    %f\\n', var(data))\nfprintf('Min:    %f\\n', min(data))\nfprintf('Max:    %f\\n', max(data))" },
+  { name: 'Fibonacci', code: 'n = 20;\nfib = zeros(1, n);\nfib(1) = 1; fib(2) = 1;\nfor i = 3:n\n  fib(i) = fib(i-1) + fib(i-2);\nend\nstem(1:n, fib)\ntitle(\'Fibonacci Sequence\')\nxlabel(\'n\')\nylabel(\'F(n)\')' },
+  { name: 'Line Styles', code: "x = linspace(0, 2*pi, 50);\nhold('on')\nplot(x, sin(x), 'b')\nplot(x, sin(x + pi/4), 'r--')\nplot(x, sin(x + pi/2), 'g:')\nlegend('Phase 0', 'Phase pi/4', 'Phase pi/2')\ntitle('Phase Shifted Waves')\ngrid('on')" },
+]
+
+// Keyboard shortcuts
+const SHORTCUTS = [
+  { keys: 'Enter', desc: 'Execute command' },
+  { keys: 'Shift+Enter', desc: 'Multi-line input' },
+  { keys: 'Up/Down', desc: 'Command history' },
+  { keys: 'Ctrl+L', desc: 'Clear terminal' },
+  { keys: 'Ctrl+Enter', desc: 'Run editor script' },
+  { keys: 'Ctrl+S', desc: 'Share code link' },
+  { keys: 'Tab', desc: 'Indent (editor)' },
 ]
 
 function PlaygroundInner() {
   const searchParams = useSearchParams()
-  const [lines, setLines] = useState<OutputLine[]>([])
+  const [items, setItems] = useState<OutputItem[]>([])
   const [input, setInput] = useState('')
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(-1)
   const [multiline, setMultiline] = useState('')
   const [isEditorMode, setIsEditorMode] = useState(false)
   const [editorCode, setEditorCode] = useState('')
+  const [envSnapshot, setEnvSnapshot] = useState<Environment | null>(null)
+  const [showVars, setShowVars] = useState(true)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [shareMsg, setShareMsg] = useState('')
+
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const editorRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const interp = new Interpreter()
-    interp.setOutput((text) => {
-      setLines(prev => [...prev, { type: 'output', text }])
-    })
+    interp.setOutput((text) => setItems(prev => [...prev, { type: 'output', text }]))
+    interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: { ...fig, series: [...fig.series] } }]))
     interpRef.current = interp
-    setLines([
-      { type: 'output', text: 'MatFree v0.1.0 — Free Scientific Computing Environment\n' },
-      { type: 'output', text: 'Type expressions below. Use Shift+Enter for multi-line input.\n\n' },
+
+    // Restore history from localStorage
+    try { const h = localStorage.getItem('mf_history'); if (h) setHistory(JSON.parse(h)) } catch {}
+    try { const c = localStorage.getItem('mf_editor'); if (c) setEditorCode(c) } catch {}
+
+    setItems([
+      { type: 'output', text: 'MatFree v0.2.0 \u2014 Free Scientific Computing\n' },
+      { type: 'output', text: 'Type commands below. Try: plot(sin(linspace(0, 2*pi, 100)))\n\n' },
     ])
 
     const initialCode = searchParams.get('code')
@@ -51,73 +81,96 @@ function PlaygroundInner() {
     }
   }, [searchParams])
 
+  // Persist editor code
+  useEffect(() => { try { localStorage.setItem('mf_editor', editorCode) } catch {} }, [editorCode])
+
   useEffect(() => {
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight
-  }, [lines])
+  }, [items])
+
+  const updateEnvSnapshot = useCallback(() => {
+    if (interpRef.current) setEnvSnapshot(interpRef.current.currentEnv())
+  }, [])
 
   const executeCode = useCallback((code: string) => {
     if (!interpRef.current || !code.trim()) return
-    setLines(prev => [...prev, { type: 'input', text: code }])
+    setItems(prev => [...prev, { type: 'input', text: code }])
     try {
-      const result = interpRef.current.execute(code)
-      if (!result.isEmpty() && code.trim().slice(-1) !== ';') {
-        // Result is already printed via output callback if it should be
-      }
+      interpRef.current.execute(code)
     } catch (e: any) {
       const msg = e instanceof LexerError ? `Lexer Error (line ${e.line}): ${e.message}`
         : e instanceof ParseError ? `Parse Error (line ${e.line}): ${e.message}`
         : e instanceof RuntimeError ? `Error: ${e.message}`
         : `Error: ${e.message ?? e}`
-      setLines(prev => [...prev, { type: 'error', text: msg + '\n' }])
+      setItems(prev => [...prev, { type: 'error', text: msg + '\n' }])
     }
-  }, [])
+    updateEnvSnapshot()
+  }, [updateEnvSnapshot])
 
   const handleSubmit = useCallback(() => {
     const code = multiline ? multiline + '\n' + input : input
     if (!code.trim()) return
-
-    // Check if we need continuation (unmatched keywords)
-    const needsContinuation = checkContinuation(code)
-    if (needsContinuation) {
-      setMultiline(code)
-      setInput('')
-      return
-    }
-
+    if (checkContinuation(code)) { setMultiline(code); setInput(''); return }
     setMultiline('')
-    setHistory(prev => [code, ...prev])
-    setHistIdx(-1)
-    setInput('')
+    const newHist = [code, ...history.filter(h => h !== code)].slice(0, 200)
+    setHistory(newHist)
+    try { localStorage.setItem('mf_history', JSON.stringify(newHist)) } catch {}
+    setHistIdx(-1); setInput('')
     executeCode(code)
-  }, [input, multiline, executeCode])
+  }, [input, multiline, executeCode, history])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && e.shiftKey) {
-      e.preventDefault()
-      setMultiline(prev => prev ? prev + '\n' + input : input)
-      setInput('')
-      return
-    }
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); setMultiline(prev => prev ? prev + '\n' + input : input); setInput(''); return }
     if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); return }
     if (e.key === 'ArrowUp') { e.preventDefault(); const idx = Math.min(histIdx + 1, history.length - 1); setHistIdx(idx); if (history[idx]) setInput(history[idx]) }
     if (e.key === 'ArrowDown') { e.preventDefault(); const idx = Math.max(histIdx - 1, -1); setHistIdx(idx); setInput(idx >= 0 ? history[idx] : '') }
-    if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setLines([]) }
-  }, [handleSubmit, histIdx, history, input])
+    if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setItems([]) }
+    if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input || editorCode) }
+  }, [handleSubmit, histIdx, history, input, editorCode])
 
-  const runEditor = useCallback(() => {
-    if (!editorCode.trim()) return
-    executeCode(editorCode)
-  }, [editorCode, executeCode])
+  const runEditor = useCallback(() => { if (editorCode.trim()) executeCode(editorCode) }, [editorCode, executeCode])
+
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runEditor(); return }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      const ta = e.currentTarget
+      const start = ta.selectionStart, end = ta.selectionEnd
+      setEditorCode(editorCode.slice(0, start) + '  ' + editorCode.slice(end))
+      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2 }, 0)
+    }
+    if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(editorCode) }
+  }, [runEditor, editorCode])
+
+  const shareCode = useCallback((code: string) => {
+    if (!code.trim()) return
+    const url = `${window.location.origin}/playground?code=${encodeURIComponent(code)}`
+    navigator.clipboard.writeText(url).then(() => {
+      setShareMsg('Link copied!')
+      setTimeout(() => setShareMsg(''), 2000)
+    }).catch(() => {
+      setShareMsg('Copy failed')
+      setTimeout(() => setShareMsg(''), 2000)
+    })
+  }, [])
+
+  const resetSession = useCallback(() => {
+    const interp = new Interpreter()
+    interp.setOutput((text) => setItems(prev => [...prev, { type: 'output', text }]))
+    interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: { ...fig, series: [...fig.series] } }]))
+    interpRef.current = interp
+    setItems([])
+    setEnvSnapshot(null)
+  }, [])
 
   const handleExampleClick = useCallback((code: string) => {
-    if (isEditorMode) {
-      setEditorCode(code)
-    } else {
-      executeCode(code)
-    }
+    if (isEditorMode) setEditorCode(code)
+    else executeCode(code)
   }, [isEditorMode, executeCode])
 
-  const focusInput = () => inputRef.current?.focus()
+  const handleInspectVar = useCallback((name: string) => {
+    if (interpRef.current) executeCode(`disp(${name})`)
+  }, [executeCode])
 
   return (
     <div className={styles.playground}>
@@ -131,18 +184,38 @@ function PlaygroundInner() {
           <button className={`${styles.tab} ${isEditorMode ? styles.tabActive : ''}`} onClick={() => setIsEditorMode(true)}>Editor</button>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.clearBtn} onClick={() => { setLines([]); interpRef.current = new Interpreter(); interpRef.current.setOutput((text) => setLines(prev => [...prev, { type: 'output', text }])) }}>
-            Reset
+          <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)} title="Toggle Variable Explorer">
+            {showVars ? 'Hide Vars' : 'Show Vars'}
           </button>
+          <button className={styles.actionBtn} onClick={() => setShowShortcuts(s => !s)} title="Keyboard Shortcuts">
+            Keys
+          </button>
+          <button className={styles.actionBtn} onClick={() => shareCode(isEditorMode ? editorCode : input)} title="Share code (Ctrl+S)">
+            {shareMsg || 'Share'}
+          </button>
+          <button className={styles.resetBtn} onClick={resetSession}>Reset</button>
         </div>
       </header>
 
+      {showShortcuts && (
+        <div className={styles.shortcutsBar}>
+          {SHORTCUTS.map((s, i) => (
+            <span key={i} className={styles.shortcut}>
+              <kbd>{s.keys}</kbd> {s.desc}
+            </span>
+          ))}
+          <button className={styles.shortcutsClose} onClick={() => setShowShortcuts(false)}>close</button>
+        </div>
+      )}
+
       <div className={styles.body}>
         <aside className={styles.sidebar}>
-          <h3>Examples</h3>
-          {EXAMPLES.map((ex, i) => (
-            <button key={i} className={styles.exBtn} onClick={() => handleExampleClick(ex.code)}>{ex.name}</button>
-          ))}
+          <div className={styles.sideSection}>
+            <h3>Examples</h3>
+            {EXAMPLES.map((ex, i) => (
+              <button key={i} className={styles.exBtn} onClick={() => handleExampleClick(ex.code)}>{ex.name}</button>
+            ))}
+          </div>
         </aside>
 
         <div className={styles.mainArea}>
@@ -150,27 +223,38 @@ function PlaygroundInner() {
             <div className={styles.editor}>
               <div className={styles.editorBar}>
                 <span>script.m</span>
-                <button className={styles.runBtn} onClick={runEditor}>Run</button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className={styles.runBtn} onClick={runEditor}>Run (Ctrl+Enter)</button>
+                </div>
               </div>
-              <textarea
-                ref={editorRef}
-                className={styles.editorArea}
-                value={editorCode}
-                onChange={e => setEditorCode(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runEditor() } }}
-                spellCheck={false}
-                placeholder="Write your code here... (Ctrl+Enter to run)"
-              />
+              <div className={styles.editorWrap}>
+                <div className={styles.lineNumbers}>
+                  {editorCode.split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
+                </div>
+                <textarea
+                  className={styles.editorArea}
+                  value={editorCode}
+                  onChange={e => setEditorCode(e.target.value)}
+                  onKeyDown={handleEditorKeyDown}
+                  spellCheck={false}
+                  placeholder="Write your code here..."
+                />
+              </div>
             </div>
           )}
 
-          <div className={`${styles.terminal} ${isEditorMode ? styles.terminalSplit : ''}`} ref={termRef} onClick={focusInput}>
-            {lines.map((line, i) => (
-              <div key={i} className={`${styles.line} ${styles[line.type]}`}>
-                {line.type === 'input' && <span className={styles.promptChar}>&gt;&gt; </span>}
-                <span style={{ whiteSpace: 'pre-wrap' }}>{line.text}</span>
-              </div>
-            ))}
+          <div className={`${styles.terminal} ${isEditorMode ? styles.terminalSplit : ''}`} ref={termRef} onClick={() => inputRef.current?.focus()}>
+            {items.map((item, i) => {
+              if (item.type === 'plot' && item.figure) {
+                return <div key={i} className={styles.plotWrap}><PlotCanvas figure={item.figure} /></div>
+              }
+              return (
+                <div key={i} className={`${styles.line} ${styles[item.type]}`}>
+                  {item.type === 'input' && <span className={styles.promptChar}>&gt;&gt; </span>}
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{item.text}</span>
+                </div>
+              )
+            })}
             <div className={styles.inputLine}>
               <span className={styles.promptChar}>{multiline ? '.. ' : '>> '}</span>
               <input
@@ -181,23 +265,27 @@ function PlaygroundInner() {
                 onKeyDown={handleKeyDown}
                 autoFocus
                 spellCheck={false}
+                placeholder={items.length <= 2 ? "Try: x = linspace(0, 2*pi, 100); plot(x, sin(x))" : ""}
               />
             </div>
           </div>
         </div>
+
+        {showVars && (
+          <aside className={styles.rightPanel}>
+            <h3>Workspace</h3>
+            <VariableExplorer env={envSnapshot} onInspect={handleInspectVar} />
+          </aside>
+        )}
       </div>
     </div>
   )
 }
 
 function checkContinuation(code: string): boolean {
-  const keywords = ['if', 'for', 'while', 'switch', 'try', 'function']
+  const kw = ['if', 'for', 'while', 'switch', 'try', 'function']
   let depth = 0
-  const tokens = code.split(/\s+/)
-  for (const t of tokens) {
-    if (keywords.includes(t)) depth++
-    if (t === 'end') depth--
-  }
+  for (const t of code.split(/\s+/)) { if (kw.includes(t)) depth++; if (t === 'end') depth-- }
   return depth > 0
 }
 

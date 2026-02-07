@@ -333,6 +333,152 @@ reg('exist', (a, interp) => {
 })
 reg('typecast_placeholder', () => Value.empty())
 
+// ═══════════════════════════════════════════════════════════════
+// PLOTTING FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+function parseLineSpec(spec: string): { color?: string, lineStyle?: 'solid' | 'dashed' | 'dotted' | 'none', marker?: 'none' | 'circle' | 'square' | 'diamond' | 'triangle' | 'x' | 'plus' } {
+  const colorMap: Record<string, string> = { r: '#ef4444', g: '#22c55e', b: '#3b82f6', k: '#e4e4ef', w: '#ffffff', m: '#d946ef', c: '#06b6d4', y: '#eab308' }
+  const result: ReturnType<typeof parseLineSpec> = {}
+  for (const [k, v] of Object.entries(colorMap)) { if (spec.includes(k)) { result.color = v; break } }
+  if (spec.includes('--')) result.lineStyle = 'dashed'
+  else if (spec.includes(':')) result.lineStyle = 'dotted'
+  else if (spec.includes('-.')) result.lineStyle = 'dashed'
+  if (spec.includes('o')) result.marker = 'circle'
+  else if (spec.includes('s')) result.marker = 'square'
+  else if (spec.includes('d')) result.marker = 'diamond'
+  else if (spec.includes('^')) result.marker = 'triangle'
+  else if (spec.includes('x')) result.marker = 'x'
+  else if (spec.includes('+')) result.marker = 'plus'
+  return result
+}
+
+reg('plot', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[], specIdx = -1
+  if (a.length >= 2 && a[0].isMatrix() && a[1].isMatrix()) {
+    x = [...mat(a[0]).data]; y = [...mat(a[1]).data]; specIdx = 2
+  } else if (a.length >= 1 && a[0].isMatrix()) {
+    y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1); specIdx = 1
+  } else { return Value.empty() }
+  const spec = specIdx < a.length && a[specIdx].isString() ? parseLineSpec(a[specIdx].string()) : {}
+  fig.series.push({ type: 'line', x, y, ...spec })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('scatter', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1) }
+  const sz = a.length >= 3 && a[2].isMatrix() ? num(a[2]) : 5
+  fig.series.push({ type: 'scatter', x, y, markerSize: sz })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('bar', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2 && a[0].isMatrix() && a[1].isMatrix()) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1) }
+  fig.series.push({ type: 'bar', x, y })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('stem', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1) }
+  fig.series.push({ type: 'stem', x, y })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('stairs', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1) }
+  fig.series.push({ type: 'stairs', x, y })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('area', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  let x: number[], y: number[]
+  if (a.length >= 2) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1) }
+  fig.series.push({ type: 'area', x, y, fillAlpha: 0.3 })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('hist', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (!fig.hold) fig.series = []
+  const data = [...mat(a[0]).data]
+  const nbins = a.length > 1 ? num(a[1]) : Math.max(5, Math.ceil(Math.sqrt(data.length)))
+  const lo = Math.min(...data), hi = Math.max(...data)
+  const binW = (hi - lo) / nbins || 1
+  const counts = new Array(nbins).fill(0)
+  const centers = new Array(nbins)
+  for (let i = 0; i < nbins; i++) centers[i] = lo + (i + 0.5) * binW
+  for (const v of data) { let b = Math.floor((v - lo) / binW); if (b >= nbins) b = nbins - 1; if (b < 0) b = 0; counts[b]++ }
+  fig.series.push({ type: 'hist', x: centers, y: counts })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+reg('title', (a, interp) => { interp.getCurrentFigure().title = a[0].string(); interp.emitPlot(); return Value.empty() })
+reg('xlabel', (a, interp) => { interp.getCurrentFigure().xlabel = a[0].string(); interp.emitPlot(); return Value.empty() })
+reg('ylabel', (a, interp) => { interp.getCurrentFigure().ylabel = a[0].string(); interp.emitPlot(); return Value.empty() })
+reg('legend', (a, interp) => {
+  const fig = interp.getCurrentFigure(); fig.legend = true
+  for (let i = 0; i < a.length && i < fig.series.length; i++) fig.series[i].label = a[i].string()
+  interp.emitPlot(); return Value.empty()
+})
+reg('grid', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (a.length === 0) fig.grid = !fig.grid
+  else fig.grid = a[0].isString() ? a[0].string() === 'on' : a[0].toBool()
+  interp.emitPlot(); return Value.empty()
+})
+reg('hold', (a, interp) => {
+  const fig = interp.getCurrentFigure()
+  if (a.length === 0) fig.hold = !fig.hold
+  else fig.hold = a[0].isString() ? a[0].string() === 'on' : a[0].toBool()
+  return Value.empty()
+})
+reg('figure', (a, interp) => {
+  const id = a.length > 0 ? num(a[0]) : interp.getCurrentFigure().id + 1
+  interp.setCurrentFigure(id)
+  return Value.empty()
+})
+reg('xlim', (a, interp) => {
+  const m = mat(a[0]); interp.getCurrentFigure().xRange = [m.data[0], m.data[1]]; interp.emitPlot(); return Value.empty()
+})
+reg('ylim', (a, interp) => {
+  const m = mat(a[0]); interp.getCurrentFigure().yRange = [m.data[0], m.data[1]]; interp.emitPlot(); return Value.empty()
+})
+reg('clf', (_, interp) => {
+  const fig = interp.getCurrentFigure(); fig.series = []; fig.title = undefined; fig.xlabel = undefined; fig.ylabel = undefined
+  interp.emitPlot(); return Value.empty()
+})
+reg('close', (_, interp) => {
+  const fig = interp.getCurrentFigure(); fig.series = []; interp.emitPlot(); return Value.empty()
+})
+
 export function getBuiltin(name: string): BuiltinFn | undefined { return builtins.get(name) }
 export function hasBuiltin(name: string): boolean { return builtins.has(name) }
 

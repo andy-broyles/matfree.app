@@ -4,10 +4,10 @@ import { useRouter } from 'next/navigation'
 import styles from './page.module.css'
 
 const EXAMPLES = [
-  { title: 'Matrix Operations', code: 'A = [1 2; 3 4];\nB = A * A\ndet(A)' },
-  { title: 'Functions', code: 'function y = fib(n)\n  if n <= 1\n    y = n;\n  else\n    y = fib(n-1) + fib(n-2);\n  end\nend\nfib(10)' },
-  { title: 'Statistics', code: 'data = [4 8 15 16 23 42];\nmean(data)\nstd(data)\nmedian(data)' },
-  { title: 'Plotting (coming soon)', code: 'x = linspace(0, 2*pi, 100);\ny = sin(x);\n% plot(x, y)  coming soon!\ndisp(\'Plot support coming soon\')' },
+  { title: 'Plot a Sine Wave', code: "x = linspace(0, 4*pi, 200);\nplot(x, sin(x))\ntitle('Sine Wave')\nxlabel('x')\nylabel('sin(x)')" },
+  { title: 'Matrix Operations', code: 'A = [1 2; 3 4];\nB = A * A\ndet(A)\ninv(A)' },
+  { title: 'Statistics & Histogram', code: "data = randn(1, 500);\nhist(data, 25)\ntitle('Normal Distribution')\nfprintf('Mean: %.4f\\n', mean(data))\nfprintf('Std: %.4f\\n', std(data))" },
+  { title: 'Multi-Series Plot', code: "x = linspace(0, 2*pi, 80);\nhold('on')\nplot(x, sin(x))\nplot(x, cos(x))\nlegend('sin(x)', 'cos(x)')\ntitle('Trig Functions')" },
 ]
 
 export default function Home() {
@@ -52,22 +52,32 @@ export default function Home() {
             <div className={styles.feature}>
               <div className={styles.featureIcon}>&#x1D400;</div>
               <h3>Matrix Engine</h3>
-              <p>Full support for dense matrices, linear algebra, eigenvalues, and more. All running natively in your browser via our TypeScript engine.</p>
+              <p>Dense matrices, linear algebra, broadcasting, and 100+ built-in functions. All running natively in your browser - zero server round trips.</p>
+            </div>
+            <div className={styles.feature}>
+              <div className={styles.featureIcon}>{'///'}~</div>
+              <h3>Beautiful Plots</h3>
+              <p>Publication-quality 2D charts: line, scatter, bar, histogram, stem, area, stairs. Interactive tooltips. One-click PNG export. Dark theme by default.</p>
+            </div>
+            <div className={styles.feature}>
+              <div className={styles.featureIcon}>{'>'}_</div>
+              <h3>Instant Startup</h3>
+              <p>No 30-second splash screen. No license check. No Java runtime. Open the page and start computing in milliseconds.</p>
+            </div>
+            <div className={styles.feature}>
+              <div className={styles.featureIcon}>{'{ }'}=</div>
+              <h3>Live Workspace</h3>
+              <p>Variable explorer shows every variable, its type, size, and value in real-time. Click to inspect. Share your code with a single link.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>f(x)</div>
               <h3>Rich Language</h3>
-              <p>Functions, anonymous functions, closures, structs, cell arrays, control flow, error handling, and a growing standard library.</p>
+              <p>Functions, anonymous functions, closures, structs, cell arrays, control flow, error handling, and a growing standard library of 100+ functions.</p>
             </div>
             <div className={styles.feature}>
-              <div className={styles.featureIcon}>{'>'}_</div>
-              <h3>Interactive REPL</h3>
-              <p>A full-featured command window with syntax highlighting, history, and instant feedback. Iterate fast on your ideas.</p>
-            </div>
-            <div className={styles.feature}>
-              <div className={styles.featureIcon}>MIT</div>
-              <h3>Open Source</h3>
-              <p>MIT licensed. No vendor lock-in. Contribute, fork, and extend. Built for the community by the community.</p>
+              <div className={styles.featureIcon}>$0</div>
+              <h3>Free Forever</h3>
+              <p>No subscriptions. No seat licenses. No vendor lock-in. Runs entirely in your browser. Your data never leaves your machine.</p>
             </div>
           </div>
         </section>
