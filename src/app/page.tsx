@@ -44,9 +44,6 @@ export default function Home() {
             <button className={styles.ctaPrimary} onClick={() => router.push('/playground')}>
               Try it now
             </button>
-            <button className={styles.ctaSecondary} onClick={() => router.push('/playground')}>
-              Learn more
-            </button>
           </div>
         </section>
 
