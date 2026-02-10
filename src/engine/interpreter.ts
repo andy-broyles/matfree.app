@@ -46,6 +46,7 @@ export class Interpreter {
   print(text: string) { this.output(text) }
   currentEnv(): Environment { return this.env }
   getGlobalEnv(): Environment { return this.globalEnv }
+  injectVariable(name: string, value: Value): void { this.globalEnv.set(name, value) }
 
   // Plotting API
   getCurrentFigure(): PlotFigure {

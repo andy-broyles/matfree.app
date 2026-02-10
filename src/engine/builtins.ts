@@ -593,6 +593,67 @@ reg('doc', (a, interp) => {
   return Value.empty()
 })
 
+// jsondecode(str) -> struct or cell
+function jsonToValue(j: unknown): Value {
+  if (j === null) return Value.empty()
+  if (typeof j === 'number') return Value.fromScalar(j)
+  if (typeof j === 'boolean') return Value.fromLogical(j)
+  if (typeof j === 'string') return Value.fromString(j)
+  if (Array.isArray(j)) {
+    const data = j.map(jsonToValue)
+    return Value.fromCell({ rows: 1, cols: data.length, data })
+  }
+  if (typeof j === 'object') {
+    const s: Record<string, Value> = {}
+    for (const [k, v] of Object.entries(j)) s[k] = jsonToValue(v)
+    return Value.fromStruct(s)
+  }
+  return Value.empty()
+}
+reg('jsondecode', (a) => {
+  const str = a[0].string()
+  try {
+    const j = JSON.parse(str)
+    return jsonToValue(j)
+  } catch (e) {
+    throw new RuntimeError(`jsondecode: invalid JSON - ${(e as Error).message}`)
+  }
+})
+
+// jsonencode(val) -> string
+function valueToJson(v: Value): unknown {
+  if (v.isEmpty()) return null
+  if (v.isMatrix()) {
+    const m = v.matrix()
+    if (m.isScalar()) return m.scalarValue()
+    if (m.numel() === 0) return []
+    const rows: number[][] = []
+    for (let r = 0; r < m.rows; r++) {
+      const row: number[] = []
+      for (let c = 0; c < m.cols; c++) row.push(m.get(r, c))
+      rows.push(row)
+    }
+    return m.rows === 1 ? rows[0] : rows
+  }
+  if (v.isString()) return v.string()
+  if (v.isStruct()) {
+    const o: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v.struct())) o[k] = valueToJson(val)
+    return o
+  }
+  if (v.isCell()) {
+    return v.cell().data.map(valueToJson)
+  }
+  return null
+}
+reg('jsonencode', (a) => {
+  try {
+    return Value.fromString(JSON.stringify(valueToJson(a[0])))
+  } catch (e) {
+    throw new RuntimeError(`jsonencode: ${(e as Error).message}`)
+  }
+})
+
 export function getBuiltin(name: string): BuiltinFn | undefined {
   return builtins.get(name) ??
     (getScientificBuiltin(name) as BuiltinFn | undefined) ??

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import styles from './playground.module.css'
-import { Interpreter, LexerError, ParseError, RuntimeError } from '@/engine'
+import { Interpreter, LexerError, ParseError, RuntimeError, Value } from '@/engine'
 import type { PlotFigure, HelpEntry } from '@/engine'
 import type { Environment } from '@/engine/environment'
 import PlotCanvas from '@/components/PlotCanvas'
@@ -113,6 +113,9 @@ function PlaygroundInner() {
   const [showFiles, setShowFiles] = useState(false)
   const [fileName, setFileName] = useState('untitled.m')
   const [exportLang, setExportLang] = useState<string | null>(null)
+  const [showLoadUrl, setShowLoadUrl] = useState(false)
+  const [loadUrlInput, setLoadUrlInput] = useState('')
+  const [loadUrlVar, setLoadUrlVar] = useState('data')
 
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
@@ -293,6 +296,24 @@ function PlaygroundInner() {
     executeCode(`help('${entry.name}')`)
   }, [executeCode])
 
+  const handleLoadUrl = useCallback(async () => {
+    const url = loadUrlInput.trim()
+    if (!url) return
+    try {
+      const res = await fetch(url)
+      const text = await res.text()
+      const interp = interpRef.current
+      if (!interp) return
+      interp.injectVariable('__url_content', Value.fromString(text))
+      executeCode(`${loadUrlVar} = readcsv(__url_content)`)
+      setItems(prev => [...prev, { type: 'info', text: `Loaded CSV from URL as '${loadUrlVar}'\n` }])
+      setShowLoadUrl(false)
+      setLoadUrlInput('')
+    } catch (e) {
+      setItems(prev => [...prev, { type: 'error', text: `Failed to load URL: ${(e as Error).message}\n` }])
+    }
+  }, [loadUrlInput, loadUrlVar, executeCode])
+
   const handleExampleClick = useCallback((code: string) => {
     if (isEditorMode) setEditorCode(code); else executeCode(code)
   }, [isEditorMode, executeCode])
@@ -314,6 +335,9 @@ function PlaygroundInner() {
           </button>
           <button className={styles.actionBtn} onClick={() => setShowFiles(v => !v)} title="File browser">
             Files
+          </button>
+          <button className={styles.actionBtn} onClick={() => setShowLoadUrl(true)} title="Load CSV from URL">
+            Load URL
           </button>
           <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)}>
             {showVars ? 'Hide Vars' : 'Vars'}
@@ -451,6 +475,24 @@ function PlaygroundInner() {
         onSelect={handleCmdSelect}
         onRun={executeCode}
       />
+
+      {showLoadUrl && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowLoadUrl(false)}>
+          <div style={{ background: '#13131d', border: '1px solid #3a3a52', borderRadius: 12, padding: 20, width: 400 }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 12px', color: '#e4e4ef' }}>Load CSV from URL</h3>
+            <input value={loadUrlInput} onChange={e => setLoadUrlInput(e.target.value)} placeholder="https://example.com/data.csv"
+              style={{ width: '100%', background: '#0e0e16', border: '1px solid #3a3a52', borderRadius: 6, color: '#e4e4ef', padding: '8px 12px', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }} />
+            <input value={loadUrlVar} onChange={e => setLoadUrlVar(e.target.value)} placeholder="Variable name"
+              style={{ width: '100%', background: '#0e0e16', border: '1px solid #3a3a52', borderRadius: 6, color: '#e4e4ef', padding: '8px 12px', fontSize: 13, marginBottom: 12, boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleLoadUrl} style={{ background: '#22c55e', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Load</button>
+              <button onClick={() => setShowLoadUrl(false)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '8px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {exportLang && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

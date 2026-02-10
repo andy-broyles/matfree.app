@@ -696,6 +696,47 @@ reg('intersect', (a) => {
   return Value.fromMatrix(new Matrix(1, u.length, u))
 })
 
+// readcsv(text) - parse CSV string into matrix (comma or tab separated, numeric only)
+reg('readcsv', (a) => {
+  const text = a[0].string()
+  const lines = text.trim().split(/\r?\n/).filter(l => l.trim())
+  if (lines.length === 0) return Value.fromMatrix(new Matrix(0, 0))
+  const rows = lines.map(line => line.split(/[,\t]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v)))
+  const cols = Math.max(...rows.map(r => r.length), 1)
+  const flat: number[] = []
+  for (const row of rows) {
+    for (let c = 0; c < cols; c++) flat.push(row[c] ?? 0)
+  }
+  return Value.fromMatrix(new Matrix(rows.length, cols, flat))
+})
+
+// writematrix(A) - return CSV string; writematrix(A, filename) - trigger download in browser
+reg('writematrix', (a, interp) => {
+  const m = mat(a[0])
+  const lines: string[] = []
+  for (let r = 0; r < m.rows; r++) {
+    const row = []
+    for (let c = 0; c < m.cols; c++) row.push(String(m.get(r, c)))
+    lines.push(row.join(','))
+  }
+  const csv = lines.join('\n')
+  if (a.length >= 2 && a[1].isString()) {
+    const filename = a[1].string() || 'data.csv'
+    if (typeof document !== 'undefined') {
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename.endsWith('.csv') ? filename : filename + '.csv'
+      link.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+  return Value.fromString(csv)
+})
+
+reg('writecsv', (a, interp) => (getScientificBuiltin('writematrix')!)(a, interp))
+
 reg('setdiff', (a) => {
   const s2 = new Set(mat(a[1]).data)
   const u = mat(a[0]).data.filter(v => !s2.has(v))

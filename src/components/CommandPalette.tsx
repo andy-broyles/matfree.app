@@ -47,13 +47,21 @@ export default function CommandPalette({ open, onClose, onSelect, onRun }: Props
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx(i => Math.max(i - 1, 0)) }
       if (e.key === 'Enter' && results[selectedIdx]) {
         e.preventDefault()
-        onSelect(results[selectedIdx])
+        if (e.ctrlKey || e.metaKey) {
+          const ex = results[selectedIdx].examples?.[0]
+          if (ex) {
+            navigator.clipboard.writeText(ex).catch(() => {})
+            onRun(ex)
+          }
+        } else {
+          onSelect(results[selectedIdx])
+        }
         onClose()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, results, selectedIdx, onSelect, onClose])
+  }, [open, results, selectedIdx, onSelect, onRun, onClose])
 
   // Scroll selected into view
   useEffect(() => {
@@ -67,7 +75,7 @@ export default function CommandPalette({ open, onClose, onSelect, onRun }: Props
     'Math': '#6366f1', 'Matrix': '#06b6d4', 'Linear Algebra': '#8b5cf6',
     'Statistics': '#f43f5e', 'Plotting': '#22c55e', 'Signal Processing': '#f59e0b',
     'Polynomials': '#ec4899', 'Calculus': '#14b8a6', 'Optimization': '#f97316',
-    'Special Functions': '#a855f7', 'I/O': '#64748b', 'Utility': '#64748b',
+    'Special Functions': '#a855f7', 'I/O': '#64748b', 'Utility': '#64748b', 'Symbolic Math': '#a855f7',
     'Interpolation': '#06b6d4', 'Differential Equations': '#ef4444',
   }
 
@@ -103,7 +111,8 @@ export default function CommandPalette({ open, onClose, onSelect, onRun }: Props
         </div>
         <div style={styles.footer}>
           <span><kbd style={styles.kbd}>&#x2191;&#x2193;</kbd> navigate</span>
-          <span><kbd style={styles.kbd}>Enter</kbd> select</span>
+          <span><kbd style={styles.kbd}>Enter</kbd> run help</span>
+          <span><kbd style={styles.kbd}>Ctrl+Enter</kbd> copy & run example</span>
           <span><kbd style={styles.kbd}>Esc</kbd> close</span>
         </div>
       </div>

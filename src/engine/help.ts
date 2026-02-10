@@ -155,6 +155,11 @@ doc('besselj', 'besselj(nu, x)', 'Bessel function of the first kind', 'Special F
 doc('disp', 'disp(x)', 'Display value', 'I/O')
 doc('fprintf', "fprintf(fmt, ...)", 'Formatted output (like C printf)', 'I/O', ["fprintf('x = %d\\n', 42)"])
 doc('sprintf', "sprintf(fmt, ...)", 'Formatted string (returns string)', 'I/O')
+doc('readcsv', "readcsv('text')", 'Parse CSV string (comma or tab separated) into numeric matrix', 'I/O', ["data = readcsv('1,2,3\\n4,5,6')"])
+doc('writematrix', 'writematrix(A) or writematrix(A, filename)', 'Matrix to CSV string; with filename triggers browser download', 'I/O', ['writematrix([1 2; 3 4], "data.csv")'])
+doc('writecsv', 'writecsv(A) or writecsv(A, filename)', 'Same as writematrix', 'I/O')
+doc('jsondecode', "jsondecode('string')", 'Parse JSON string to struct or cell', 'I/O', ["s = jsondecode('{\"x\":1,\"y\":2}')"])
+doc('jsonencode', 'jsonencode(val)', 'Convert struct, cell, or matrix to JSON string', 'I/O', ['jsonencode(struct("a", 1, "b", 2))'])
 
 // Utility
 doc('tic', 'tic', 'Start stopwatch timer', 'Utility')

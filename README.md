@@ -11,8 +11,10 @@ MatFree is a free, open-source computing environment for numerical analysis, mat
 - **Matrix Engine** — Dense matrices, linear algebra (det, inv, eigenvalues), broadcasting
 - **Rich Language** — Functions, anonymous functions, closures, structs, cell arrays, control flow
 - **Interactive REPL** — Command window with history, instant feedback
-- **100+ Built-in Functions** — Math, statistics, string ops, linear algebra, and more
+- **200+ Built-in Functions** — Math, statistics, signal processing, symbolic math, ODEs, and more
 - **Script Editor** — Write and run multi-line scripts in the browser
+- **Notebook** — Code and markdown cells with save/load to IndexedDB
+- **Data I/O** — `readcsv`, `writematrix`, `writecsv`, `jsondecode`, `jsonencode`; Load URL for CSV
 - **Open Source** — MIT licensed, community-driven
 
 ## Try It
@@ -41,6 +43,11 @@ fib(20)
 data = [4 8 15 16 23 42];
 fprintf('Mean: %f\n', mean(data))
 fprintf('Std: %f\n', std(data))
+
+% Data I/O: parse CSV, export, JSON
+data = readcsv('1,2,3\n4,5,6');
+writematrix(data, 'output.csv')
+s = jsondecode('{"x":1,"y":2}');
 ```
 
 ## Development
@@ -63,7 +70,7 @@ The `engine/` directory contains a C++ implementation of the MatFree engine for 
 ## Architecture
 
 - `src/engine/` — TypeScript engine (lexer, parser, interpreter) that runs in the browser
-- `src/app/` — Next.js web application (landing page + playground)
+- `src/app/` — Next.js web application (landing page, playground, notebook)
 - `engine/` — C++ native engine (for CLI and native bindings)
 
 ## License
