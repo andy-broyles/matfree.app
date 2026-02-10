@@ -12,7 +12,6 @@ import type { Plot3DData } from '@/components/Plot3D'
 import VariableExplorer from '@/components/VariableExplorer'
 import CommandPalette from '@/components/CommandPalette'
 import Autocomplete from '@/components/Autocomplete'
-import AIAssistant from '@/components/AIAssistant'
 import FileTree from '@/components/FileTree'
 import type { MFFile } from '@/components/FileTree'
 import { toPython, toJulia } from '@/engine/transpiler'
@@ -111,7 +110,6 @@ function PlaygroundInner() {
   const [acIdx, setAcIdx] = useState(0)
   const [acWord, setAcWord] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
-  const [showAI, setShowAI] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
   const [fileName, setFileName] = useState('untitled.m')
   const [exportLang, setExportLang] = useState<string | null>(null)
@@ -311,9 +309,6 @@ function PlaygroundInner() {
           <button className={`${styles.tab} ${isEditorMode ? styles.tabActive : ''}`} onClick={() => setIsEditorMode(true)}>Editor</button>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.actionBtn} onClick={() => setShowAI(v => !v)} title="AI Assistant">
-            {showAI ? 'Hide AI' : 'AI'}
-          </button>
           <button className={styles.actionBtn} onClick={() => setCmdPaletteOpen(true)} title="Command Palette (Ctrl+K)">
             Search
           </button>
@@ -455,12 +450,6 @@ function PlaygroundInner() {
         onClose={() => setCmdPaletteOpen(false)}
         onSelect={handleCmdSelect}
         onRun={executeCode}
-      />
-
-      <AIAssistant
-        visible={showAI}
-        onClose={() => setShowAI(false)}
-        onRunCode={executeCode}
       />
 
       {exportLang && (
