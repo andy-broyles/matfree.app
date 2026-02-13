@@ -47,6 +47,33 @@ export default function Home() {
           </div>
         </section>
 
+        <section className={styles.tutorial}>
+          <h2>5-step quick start</h2>
+          <p className={styles.tutorialIntro}>New to MatFree? Here&apos;s where everything is.</p>
+          <ol className={styles.tutorialSteps}>
+            <li>
+              <span className={styles.stepNum}>1</span>
+              <strong>Open Playground or Notebook</strong> — Click &quot;Open Playground&quot; above (or <button type="button" className={styles.stepLink} onClick={() => router.push('/playground')}>here</button>) for a quick REPL. For structured work with multiple cells, use the <button type="button" className={styles.stepLink} onClick={() => router.push('/notebook')}>Notebook</button>.
+            </li>
+            <li>
+              <span className={styles.stepNum}>2</span>
+              <strong>Type your code</strong> — The editor at the top is where you write MatFree code (MATLAB-style syntax). Try <code>x = 1:10; plot(x, x.^2)</code>.
+            </li>
+            <li>
+              <span className={styles.stepNum}>3</span>
+              <strong>Run it</strong> — Press <kbd>Enter</kbd> to execute a line, or <kbd>Ctrl+Enter</kbd> to run the full editor. <kbd>Shift+Enter</kbd> for multi-line input.
+            </li>
+            <li>
+              <span className={styles.stepNum}>4</span>
+              <strong>See results</strong> — Output appears below the editor. Plots show in the plot panel on the right. Use the <strong>Variable explorer</strong> to inspect values.
+            </li>
+            <li>
+              <span className={styles.stepNum}>5</span>
+              <strong>Get help</strong> — Press <kbd>Ctrl+K</kbd> for the command palette: examples, shortcuts, and more. Try &quot;Plotting → Sine Wave&quot; to load a ready-made example.
+            </li>
+          </ol>
+        </section>
+
         <section className={styles.features}>
           <div className={styles.featureGrid}>
             <div className={styles.feature}>
