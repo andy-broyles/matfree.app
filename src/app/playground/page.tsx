@@ -14,6 +14,7 @@ import CommandPalette from '@/components/CommandPalette'
 import Autocomplete from '@/components/Autocomplete'
 import FileTree from '@/components/FileTree'
 import type { MFFile } from '@/components/FileTree'
+import MathEquationEditor from '@/components/MathEquationEditor'
 import { toPython, toJulia } from '@/engine/transpiler'
 import katex from 'katex'
 
@@ -116,6 +117,8 @@ function PlaygroundInner() {
   const [showLoadUrl, setShowLoadUrl] = useState(false)
   const [loadUrlInput, setLoadUrlInput] = useState('')
   const [loadUrlVar, setLoadUrlVar] = useState('data')
+  const [showMathEditor, setShowMathEditor] = useState(false)
+  const [mathExpr, setMathExpr] = useState('')
 
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
@@ -339,6 +342,9 @@ function PlaygroundInner() {
           <button className={styles.actionBtn} onClick={() => setShowLoadUrl(true)} title="Load CSV from URL">
             Load URL
           </button>
+          <button className={styles.actionBtn} onClick={() => setShowMathEditor(v => !v)} title="Visual math equation editor">
+            Math
+          </button>
           <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)}>
             {showVars ? 'Hide Vars' : 'Vars'}
           </button>
@@ -475,6 +481,26 @@ function PlaygroundInner() {
         onSelect={handleCmdSelect}
         onRun={executeCode}
       />
+
+      {showMathEditor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => setShowMathEditor(false)}>
+          <div style={{ width: '100%', maxWidth: 560, background: '#0e0e16', borderRadius: 12, border: '1px solid #2a2a3a', overflow: 'hidden' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #2a2a3a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, color: '#e4e4ef', fontSize: 14 }}>Equation Editor</span>
+              <button onClick={() => setShowMathEditor(false)} style={{ background: 'none', border: 'none', color: '#666680', cursor: 'pointer', fontSize: 18 }}>×</button>
+            </div>
+            <div style={{ padding: 16 }}>
+              <MathEquationEditor
+                value={mathExpr}
+                onChange={setMathExpr}
+                onInsertCode={(code) => { executeCode(code); setShowMathEditor(false) }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {showLoadUrl && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

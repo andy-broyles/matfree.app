@@ -9,6 +9,7 @@ import Plot3D from '@/components/Plot3D'
 import type { Plot3DData } from '@/components/Plot3D'
 import VariableExplorer from '@/components/VariableExplorer'
 import CommandPalette from '@/components/CommandPalette'
+import MathEquationEditor from '@/components/MathEquationEditor'
 import { getAllNotebooks, saveNotebook, loadNotebook, deleteNotebook } from '@/lib/notebookStorage'
 import type { MFNotebook, StoredCell } from '@/lib/notebookStorage'
 import katex from 'katex'
@@ -89,6 +90,8 @@ export default function NotebookPage() {
   const [loadUrlOpen, setLoadUrlOpen] = useState(false)
   const [loadUrlInput, setLoadUrlInput] = useState('')
   const [loadUrlVar, setLoadUrlVar] = useState('data')
+  const [showMathEditor, setShowMathEditor] = useState(false)
+  const [mathExpr, setMathExpr] = useState('')
   const interpRef = useRef<Interpreter | null>(null)
 
   useEffect(() => { interpRef.current = new Interpreter() }, [])
@@ -157,9 +160,9 @@ export default function NotebookPage() {
     for (const cell of cells) { if (cell.type === 'code') runCell(cell.id) }
   }, [cells, runCell])
 
-  const addCell = useCallback((afterId: string, type: 'code' | 'markdown') => {
+  const addCell = useCallback((afterId: string, type: 'code' | 'markdown', initialContent = '') => {
     const idx = cells.findIndex(c => c.id === afterId)
-    const newCell: Cell = { id: uid(), type, content: '', output: [], running: false }
+    const newCell: Cell = { id: uid(), type, content: initialContent, output: [], running: false }
     setCells(prev => [...prev.slice(0, idx + 1), newCell, ...prev.slice(idx + 1)])
   }, [cells])
 
@@ -310,6 +313,7 @@ export default function NotebookPage() {
           <button onClick={handleSave} style={{ background: '#4f46e5', border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Save</button>
           <button onClick={() => setCmdPaletteOpen(true)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Search (Ctrl+K)</button>
           <button onClick={() => setLoadUrlOpen(true)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Load URL</button>
+          <button onClick={() => setShowMathEditor(v => !v)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Math</button>
           <button onClick={() => setShowVars(v => !v)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>{showVars ? 'Hide Vars' : 'Vars'}</button>
           <a href="/playground" style={{ color: '#818cf8', fontSize: 12, textDecoration: 'none', padding: '6px 12px', borderRadius: 6, border: '1px solid #3a3a52' }}>Playground</a>
           <button onClick={runAll} style={{ background: '#22c55e', border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Run All</button>
@@ -327,6 +331,29 @@ export default function NotebookPage() {
                 <button onClick={async () => { await deleteNotebook(nb.name); refreshNotebooks() }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11 }}>Delete</button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {showMathEditor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setShowMathEditor(false)}>
+          <div style={{ width: '100%', maxWidth: 560, background: '#0e0e16', borderRadius: 12, border: '1px solid #2a2a3a', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #2a2a3a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, color: '#e4e4ef', fontSize: 14 }}>Equation Editor</span>
+              <button onClick={() => setShowMathEditor(false)} style={{ background: 'none', border: 'none', color: '#666680', cursor: 'pointer', fontSize: 18 }}>×</button>
+            </div>
+            <div style={{ padding: 16 }}>
+              <MathEquationEditor
+                value={mathExpr}
+                onChange={setMathExpr}
+                onInsertCode={(code) => {
+                  const firstCode = cells.find(c => c.type === 'code')
+                  if (firstCode) updateCell(firstCode.id, firstCode.content ? firstCode.content + '\n\n' + code : code)
+                  else addCell(cells[0]?.id ?? '', 'code', code)
+                  setShowMathEditor(false)
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
