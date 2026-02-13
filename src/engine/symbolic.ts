@@ -175,7 +175,7 @@ function simplifyOnce(e: SymExpr): SymExpr {
       if (isNum(l, 0)) return r
       if (isNum(r, 0)) return l
       if (isNum(l) && isNum(r)) return N((l as any).value + (r as any).value)
-      if (r.kind === 'neg') return simplifyOnce(ADD(l, NEG(r)))
+      // Do NOT convert add(l, neg(r)) to add(l, r) - that would flip the sign of r
       if (eq(l, r)) return simplifyOnce(MUL(N(2), l))
       // Collect like terms: a*x + b*x = (a+b)*x
       const lCoeff = getCoeff(l), rCoeff = getCoeff(r)
