@@ -5,6 +5,7 @@ import type { Interpreter } from './interpreter'
 import { getScientificBuiltin, hasScientificBuiltin, allScientificNames } from './scientific'
 import { getSymbolicBuiltin, hasSymbolicBuiltin, allSymbolicNames } from './symbolic'
 import { getAdvancedBuiltin, hasAdvancedBuiltin, allAdvancedNames } from './advanced'
+import { getHelp, searchHelp } from './help'
 
 type BuiltinFn = (args: Value[], interp: Interpreter) => Value
 
@@ -12,8 +13,14 @@ const builtins: Map<string, BuiltinFn> = new Map()
 
 function reg(name: string, fn: BuiltinFn) { builtins.set(name, fn) }
 
-function num(v: Value): number { return v.toScalar() }
-function mat(v: Value): Matrix { return v.toMatrix() }
+function num(v: Value): number {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toScalar()
+}
+function mat(v: Value): Matrix {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toMatrix()
+}
 
 // Math functions
 reg('sin', (a) => applyElem(a[0], Math.sin))
@@ -31,7 +38,15 @@ reg('log', (a) => applyElem(a[0], Math.log))
 reg('log2', (a) => applyElem(a[0], Math.log2))
 reg('log10', (a) => applyElem(a[0], Math.log10))
 reg('sqrt', (a) => applyElem(a[0], Math.sqrt))
-reg('abs', (a) => applyElem(a[0], Math.abs))
+reg('abs', (a) => {
+  const m = mat(a[0])
+  // Complex values (e.g. from fft) -> magnitude
+  if (m.imag) {
+    const im = m.imag
+    return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map((re, i) => Math.hypot(re, im[i]))))
+  }
+  return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(Math.abs)))
+})
 reg('ceil', (a) => applyElem(a[0], Math.ceil))
 reg('floor', (a) => applyElem(a[0], Math.floor))
 reg('round', (a) => applyElem(a[0], Math.round))
@@ -39,12 +54,28 @@ reg('fix', (a) => applyElem(a[0], (v) => v > 0 ? Math.floor(v) : Math.ceil(v)))
 reg('mod', (a) => { const m1 = mat(a[0]), m2 = mat(a[1]); return Value.fromMatrix(new Matrix(m1.rows, m1.cols, m1.data.map((v, i) => v - Math.floor(v / m2.data[i % m2.data.length]) * m2.data[i % m2.data.length]))) })
 reg('rem', (a) => Value.fromScalar(num(a[0]) % num(a[1])))
 reg('sign', (a) => applyElem(a[0], Math.sign))
-reg('max', (a) => {
-  if (a.length === 1) return Value.fromScalar(mat(a[0]).maxVal())
+reg('max', (a, interp) => {
+  if (a.length === 1) {
+    const m = mat(a[0])
+    if (interp.getNargout() >= 2) {
+      let best = -Infinity, idx = 0
+      for (let i = 0; i < m.data.length; i++) if (m.data[i] > best) { best = m.data[i]; idx = i }
+      return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromScalar(best), Value.fromScalar(idx + 1)] })
+    }
+    return Value.fromScalar(m.maxVal())
+  }
   return Value.fromScalar(Math.max(num(a[0]), num(a[1])))
 })
-reg('min', (a) => {
-  if (a.length === 1) return Value.fromScalar(mat(a[0]).minVal())
+reg('min', (a, interp) => {
+  if (a.length === 1) {
+    const m = mat(a[0])
+    if (interp.getNargout() >= 2) {
+      let best = Infinity, idx = 0
+      for (let i = 0; i < m.data.length; i++) if (m.data[i] < best) { best = m.data[i]; idx = i }
+      return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromScalar(best), Value.fromScalar(idx + 1)] })
+    }
+    return Value.fromScalar(m.minVal())
+  }
   return Value.fromScalar(Math.min(num(a[0]), num(a[1])))
 })
 reg('sum', (a) => Value.fromScalar(mat(a[0]).sum()))
@@ -106,9 +137,14 @@ reg('repmat', (a) => {
 })
 
 // Matrix properties
-reg('size', (a) => {
+reg('size', (a, interp) => {
   const m = mat(a[0])
   if (a.length > 1) { const d = num(a[1]); return Value.fromScalar(d === 1 ? m.rows : m.cols) }
+  if (interp.getNargout() >= 2) {
+    const dims = [Value.fromScalar(m.rows), Value.fromScalar(m.cols)]
+    while (dims.length < interp.getNargout()) dims.push(Value.fromScalar(1)) // trailing singleton dims
+    return Value.fromCell({ rows: 1, cols: dims.length, data: dims })
+  }
   return Value.fromMatrix(new Matrix(1, 2, [m.rows, m.cols]))
 })
 reg('length', (a) => { const m = mat(a[0]); return Value.fromScalar(Math.max(m.rows, m.cols)) })
@@ -157,9 +193,16 @@ reg('var', (a) => {
   const m = mat(a[0]); const mu = m.mean(); const n = m.numel()
   return Value.fromScalar(m.data.reduce((s, v) => s + (v - mu) ** 2, 0) / (n - 1))
 })
-reg('sort', (a) => {
+reg('sort', (a, interp) => {
   const m = mat(a[0])
-  return Value.fromMatrix(new Matrix(m.rows, m.cols, [...m.data].sort((a, b) => a - b)))
+  const desc = a.length > 1 && a[1].isString() && a[1].string() === 'descend'
+  const order = m.data.map((_, i) => i).sort((i, j) => desc ? m.data[j] - m.data[i] : m.data[i] - m.data[j])
+  const sorted = new Matrix(m.rows, m.cols, order.map(i => m.data[i]))
+  if (interp.getNargout() >= 2) {
+    const idx = new Matrix(m.rows, m.cols, order.map(i => i + 1)) // 1-based original positions
+    return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromMatrix(sorted), Value.fromMatrix(idx)] })
+  }
+  return Value.fromMatrix(sorted)
 })
 
 // String functions
@@ -275,8 +318,22 @@ reg('nargout', () => Value.fromScalar(0))
 // Logical
 reg('any', (a) => Value.fromLogical(mat(a[0]).data.some(v => v !== 0)))
 reg('all', (a) => Value.fromLogical(mat(a[0]).data.every(v => v !== 0)))
-reg('find', (a) => {
-  const m = mat(a[0]); const idx: number[] = []
+reg('find', (a, interp) => {
+  const m = mat(a[0])
+  if (interp.getNargout() >= 2) {
+    // [row, col, val] = find(X): column-major order, 1-based
+    const rs: number[] = [], cs: number[] = [], vs: number[] = []
+    for (let c = 0; c < m.cols; c++) for (let r = 0; r < m.rows; r++) {
+      if (m.get(r, c) !== 0) { rs.push(r + 1); cs.push(c + 1); vs.push(m.get(r, c)) }
+    }
+    const data = [
+      Value.fromMatrix(new Matrix(rs.length, 1, rs)),
+      Value.fromMatrix(new Matrix(cs.length, 1, cs)),
+      Value.fromMatrix(new Matrix(vs.length, 1, vs)),
+    ]
+    return Value.fromCell({ rows: 1, cols: 3, data })
+  }
+  const idx: number[] = []
   for (let i = 0; i < m.data.length; i++) if (m.data[i] !== 0) idx.push(i + 1) // 1-indexed
   return Value.fromMatrix(new Matrix(1, idx.length, idx))
 })
@@ -558,8 +615,7 @@ reg('help', (a, interp) => {
     return Value.empty()
   }
   const name = a[0].isString() ? a[0].string() : ''
-  const { getHelp: gh, searchHelp: sh } = require('./help')
-  const entry = gh(name)
+  const entry = getHelp(name)
   if (entry) {
     interp.print(`\n  ${entry.name} - ${entry.description}\n`)
     interp.print(`  Syntax: ${entry.syntax}\n`)
@@ -570,7 +626,7 @@ reg('help', (a, interp) => {
     }
     interp.print('\n')
   } else {
-    const results = sh(name)
+    const results = searchHelp(name)
     if (results.length > 0) {
       interp.print(`  No exact match for '${name}'. Did you mean:\n`)
       for (const r of results.slice(0, 8)) interp.print(`    ${r.name.padEnd(15)} - ${r.description}\n`)
@@ -583,9 +639,8 @@ reg('help', (a, interp) => {
 })
 
 reg('doc', (a, interp) => {
-  const { searchHelp: sh } = require('./help')
   const query = a.length > 0 ? (a[0].isString() ? a[0].string() : '') : ''
-  const results = sh(query)
+  const results = searchHelp(query)
   if (results.length === 0) { interp.print(`  No results for '${query}'.\n`); return Value.empty() }
   interp.print(`  Found ${results.length} results for '${query}':\n`)
   for (const r of results.slice(0, 20)) interp.print(`    ${r.name.padEnd(15)} ${r.syntax.padEnd(30)} ${r.description}\n`)

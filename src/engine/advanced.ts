@@ -3,12 +3,19 @@
 
 import { Value, Matrix, RuntimeError } from './value'
 import type { Interpreter } from './interpreter'
+import { toPython, toJulia } from './transpiler'
 
 type BFn = (args: Value[], interp: Interpreter) => Value
 const fns: Map<string, BFn> = new Map()
 function reg(name: string, fn: BFn) { fns.set(name, fn) }
-function num(v: Value): number { return v.toScalar() }
-function mat(v: Value): Matrix { return v.toMatrix() }
+function num(v: Value): number {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toScalar()
+}
+function mat(v: Value): Matrix {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toMatrix()
+}
 
 // ═══════════════════════════════════════════════════════════════
 // MATRIX FUNCTIONS (expm, logm, sqrtm)
@@ -19,15 +26,16 @@ reg('expm', (a) => {
   const A = mat(a[0])
   if (A.rows !== A.cols) throw new RuntimeError('expm requires square matrix')
   const n = A.rows
-  // Scale: find s such that ||A/2^s|| < 1
+  // Scale: find s such that ||A/2^s|| < 0.5
   let s = 0, norm = A.norm()
-  while (norm > 1) { norm /= 2; s++ }
+  while (norm > 0.5) { norm /= 2; s++ }
   let scaled = A.clone()
   for (let i = 0; i < s; i++) scaled = scaled.scalarOp(0.5, '*')
-  // Padé(6) approximation
+  // Diagonal Padé [6/6] approximant of exp:
+  // c_{k+1} = c_k * (m - k) / ((k + 1) * (2m - k)), m = 6
   let N_mat = Matrix.eye(n), D_mat = Matrix.eye(n)
   let Ak = Matrix.eye(n)
-  const c = [1, 1/2, 1/10, 1/120, 1/1680, 1/30240, 1/665280]
+  const c = [1, 1 / 2, 5 / 44, 1 / 66, 1 / 792, 1 / 15840, 1 / 665280]
   for (let k = 1; k <= 6; k++) {
     Ak = Ak.mul(scaled)
     const term = Ak.scalarOp(c[k], '*')
@@ -521,8 +529,8 @@ function build3DGrid(X: Matrix, Y: Matrix, Z: Matrix) {
 
 reg('to_python', (a, interp) => {
   try {
-    const { toPython } = require('./transpiler')
-    const code = a[0].string()
+    // Single-quoted MatFree strings keep literal \n; treat them as newlines here
+    const code = a[0].string().replace(/\\n/g, '\n')
     const py = toPython(code)
     interp.print(py + '\n')
     return Value.fromString(py)
@@ -534,8 +542,7 @@ reg('to_python', (a, interp) => {
 
 reg('to_julia', (a, interp) => {
   try {
-    const { toJulia } = require('./transpiler')
-    const code = a[0].string()
+    const code = a[0].string().replace(/\\n/g, '\n')
     const jl = toJulia(code)
     interp.print(jl + '\n')
     return Value.fromString(jl)

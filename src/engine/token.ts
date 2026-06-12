@@ -32,10 +32,13 @@ export interface Token {
   isComplex: boolean
   line: number
   col: number
+  /** True if whitespace immediately precedes this token. Used by the parser to
+   *  disambiguate `[1 -2]` (two elements) from `[1 - 2]` / `[1-2]` (subtraction). */
+  spaceBefore: boolean
 }
 
-export function makeToken(type: TokenType, lexeme: string, line: number, col: number): Token {
-  return { type, lexeme, numValue: 0, imagValue: 0, isComplex: false, line, col }
+export function makeToken(type: TokenType, lexeme: string, line: number, col: number, spaceBefore = false): Token {
+  return { type, lexeme, numValue: 0, imagValue: 0, isComplex: false, line, col, spaceBefore }
 }
 
 const KEYWORDS: Record<string, TokenType> = {

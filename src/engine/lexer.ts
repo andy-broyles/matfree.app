@@ -40,20 +40,30 @@ export class Lexer {
     return c
   }
 
+  // Whether whitespace was consumed since the previous token; consumed by takeSpace().
+  private pendingSpace = false
+
   private skipWhitespace(): void {
     while (!this.isAtEnd()) {
       const c = this.current()
-      if (c === ' ' || c === '\t' || c === '\r') { this.advance() }
+      if (c === ' ' || c === '\t' || c === '\r') { this.advance(); this.pendingSpace = true }
       else if (c === '.' && this.peek(1) === '.' && this.peek(2) === '.') {
         this.advance(); this.advance(); this.advance()
         while (!this.isAtEnd() && this.current() !== '\n') this.advance()
         if (!this.isAtEnd()) this.advance()
+        this.pendingSpace = true
       } else break
     }
   }
 
+  private takeSpace(): boolean {
+    const s = this.pendingSpace
+    this.pendingSpace = false
+    return s
+  }
+
   private mk(type: TokenType, lexeme: string): Token {
-    const tok = makeToken(type, lexeme, this.line, this.col - lexeme.length)
+    const tok = makeToken(type, lexeme, this.line, this.col - lexeme.length, this.takeSpace())
     this.lastToken = tok
     return tok
   }
@@ -183,7 +193,7 @@ export class Lexer {
       num += this.advance()
       isComplex = true
     }
-    const tok = makeToken(TokenType.NUMBER, num, this.line, startCol)
+    const tok = makeToken(TokenType.NUMBER, num, this.line, startCol, this.takeSpace())
     if (isComplex) {
       tok.isComplex = true
       tok.imagValue = parseFloat(num.slice(0, -1))
@@ -205,7 +215,7 @@ export class Lexer {
         throw new LexerError('Unterminated string', this.line, this.col)
       } else { str += this.advance() }
     }
-    const tok = makeToken(TokenType.STRING, str, this.line, this.col - str.length - 2)
+    const tok = makeToken(TokenType.STRING, str, this.line, this.col - str.length - 2, this.takeSpace())
     this.lastToken = tok
     return tok
   }
@@ -215,7 +225,7 @@ export class Lexer {
     const startCol = this.col
     while (!this.isAtEnd() && /[a-zA-Z0-9_]/.test(this.current())) id += this.advance()
     const type = KEYWORDS[id] ?? TokenType.IDENTIFIER
-    const tok = makeToken(type, id, this.line, startCol)
+    const tok = makeToken(type, id, this.line, startCol, this.takeSpace())
     this.lastToken = tok
     return tok
   }

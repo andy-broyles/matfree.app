@@ -84,7 +84,7 @@ export default function Home() {
             <div className={styles.feature}>
               <div className={styles.featureIcon}>{'///'}~</div>
               <h3>Interactive Plots</h3>
-              <p>Zoom, pan, crosshair tracking. 9 plot types. Annotations. CSV data export. PNG export. Heatmaps with Viridis colormap. All interactive.</p>
+              <p>Zoom, pan, crosshair tracking. 14 plot types including 3D surfaces. Annotations. CSV data export. PNG export. Heatmaps with Viridis colormap. All interactive.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>&#x1D400;</div>

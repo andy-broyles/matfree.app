@@ -11,7 +11,24 @@ export class ParseError extends Error {
 
 export class Parser {
   private pos = 0
+  // Bracket-context stack: true while directly inside a matrix/cell literal,
+  // false inside parens/indexing. Drives MATLAB's space-sensitive sign rule:
+  // in `[1 -2]` the minus starts a new element; in `[1 - 2]` it subtracts.
+  private bracketCtx: boolean[] = []
   constructor(private tokens: Token[]) {}
+
+  private inMatrixLiteral(): boolean {
+    return this.bracketCtx.length > 0 && this.bracketCtx[this.bracketCtx.length - 1]
+  }
+
+  /** True when the current +/- token should end the current matrix element:
+   *  it has whitespace before it but its operand is attached (no space after). */
+  private isElementBreak(): boolean {
+    if (!this.inMatrixLiteral()) return false
+    const t = this.cur()
+    if (t.type !== TokenType.PLUS && t.type !== TokenType.MINUS) return false
+    return t.spaceBefore && !this.peekTok().spaceBefore
+  }
 
   parse(): Program {
     const program: Program = { statements: [], functions: [] }
@@ -238,6 +255,7 @@ export class Parser {
   private parseAddSub(): Expr {
     let left = this.parseMulDiv()
     while ([TokenType.PLUS, TokenType.MINUS].includes(this.cur().type)) {
+      if (this.isElementBreak()) break // `[1 -2]`: minus starts the next element
       const op = this.advance().type; left = { kind: 'binary', op, left, right: this.parseMulDiv() }
     }
     return left
@@ -271,20 +289,26 @@ export class Parser {
     while (true) {
       if (this.check(TokenType.LPAREN)) {
         this.advance(); const args: Expr[] = []
-        while (!this.check(TokenType.RPAREN) && !this.isEnd()) {
-          if (this.check(TokenType.COLON)) { this.advance(); args.push({ kind: 'colon', start: null, step: null, stop: null }) }
-          else args.push(this.parseExpression())
-          if (!this.check(TokenType.RPAREN)) this.expect(TokenType.COMMA, "Expected ','")
-        }
-        this.expect(TokenType.RPAREN, "Expected ')'")
+        this.bracketCtx.push(false) // suspend the matrix sign rule inside call args/indexing
+        try {
+          while (!this.check(TokenType.RPAREN) && !this.isEnd()) {
+            if (this.check(TokenType.COLON)) { this.advance(); args.push({ kind: 'colon', start: null, step: null, stop: null }) }
+            else args.push(this.parseExpression())
+            if (!this.check(TokenType.RPAREN)) this.expect(TokenType.COMMA, "Expected ','")
+          }
+          this.expect(TokenType.RPAREN, "Expected ')'")
+        } finally { this.bracketCtx.pop() }
         expr = { kind: 'call', callee: expr, args }
       } else if (this.check(TokenType.LBRACE)) {
         this.advance(); const indices: Expr[] = []
-        while (!this.check(TokenType.RBRACE) && !this.isEnd()) {
-          indices.push(this.parseExpression())
-          if (!this.check(TokenType.RBRACE)) this.expect(TokenType.COMMA, "Expected ','")
-        }
-        this.expect(TokenType.RBRACE, "Expected '}'")
+        this.bracketCtx.push(false)
+        try {
+          while (!this.check(TokenType.RBRACE) && !this.isEnd()) {
+            indices.push(this.parseExpression())
+            if (!this.check(TokenType.RBRACE)) this.expect(TokenType.COMMA, "Expected ','")
+          }
+          this.expect(TokenType.RBRACE, "Expected '}'")
+        } finally { this.bracketCtx.pop() }
         expr = { kind: 'cellIndex', object: expr, indices }
       } else if (this.check(TokenType.DOT) && this.peekTok().type === TokenType.IDENTIFIER) {
         this.advance(); expr = { kind: 'dot', object: expr, field: this.advance().lexeme }
@@ -306,7 +330,11 @@ export class Parser {
     if (this.check(TokenType.FALSE_KW)) { this.advance(); return { kind: 'bool', value: false } }
     if (this.check(TokenType.END)) { this.advance(); return { kind: 'end' } }
     if (this.check(TokenType.IDENTIFIER)) return { kind: 'identifier', name: this.advance().lexeme }
-    if (this.match(TokenType.LPAREN)) { const e = this.parseExpression(); this.expect(TokenType.RPAREN, "Expected ')'"); return e }
+    if (this.match(TokenType.LPAREN)) {
+      this.bracketCtx.push(false)
+      try { const e = this.parseExpression(); this.expect(TokenType.RPAREN, "Expected ')'"); return e }
+      finally { this.bracketCtx.pop() }
+    }
     if (this.check(TokenType.LBRACKET)) return this.parseMatrixLiteral()
     if (this.check(TokenType.LBRACE)) return this.parseCellLiteral()
     if (this.check(TokenType.AT)) {
@@ -328,30 +356,36 @@ export class Parser {
   private parseMatrixLiteral(): Expr {
     this.expect(TokenType.LBRACKET, "'['")
     if (this.check(TokenType.RBRACKET)) { this.advance(); return { kind: 'matrix', rows: [] } }
-    const rows: Expr[][] = []; let row: Expr[] = []
-    while (!this.check(TokenType.RBRACKET) && !this.isEnd()) {
-      if (this.check(TokenType.SEMICOLON) || this.check(TokenType.NEWLINE)) {
-        if (row.length) { rows.push(row); row = [] }; this.advance(); this.skipNL(); continue
+    this.bracketCtx.push(true)
+    try {
+      const rows: Expr[][] = []; let row: Expr[] = []
+      while (!this.check(TokenType.RBRACKET) && !this.isEnd()) {
+        if (this.check(TokenType.SEMICOLON) || this.check(TokenType.NEWLINE)) {
+          if (row.length) { rows.push(row); row = [] }; this.advance(); this.skipNL(); continue
+        }
+        row.push(this.parseExpression()); this.match(TokenType.COMMA)
       }
-      row.push(this.parseExpression()); this.match(TokenType.COMMA)
-    }
-    if (row.length) rows.push(row)
-    this.expect(TokenType.RBRACKET, "']'")
-    return { kind: 'matrix', rows }
+      if (row.length) rows.push(row)
+      this.expect(TokenType.RBRACKET, "']'")
+      return { kind: 'matrix', rows }
+    } finally { this.bracketCtx.pop() }
   }
 
   private parseCellLiteral(): Expr {
     this.expect(TokenType.LBRACE, "'{'")
     if (this.check(TokenType.RBRACE)) { this.advance(); return { kind: 'cellArray', rows: [] } }
-    const rows: Expr[][] = []; let row: Expr[] = []
-    while (!this.check(TokenType.RBRACE) && !this.isEnd()) {
-      if (this.check(TokenType.SEMICOLON) || this.check(TokenType.NEWLINE)) {
-        if (row.length) { rows.push(row); row = [] }; this.advance(); this.skipNL(); continue
+    this.bracketCtx.push(true)
+    try {
+      const rows: Expr[][] = []; let row: Expr[] = []
+      while (!this.check(TokenType.RBRACE) && !this.isEnd()) {
+        if (this.check(TokenType.SEMICOLON) || this.check(TokenType.NEWLINE)) {
+          if (row.length) { rows.push(row); row = [] }; this.advance(); this.skipNL(); continue
+        }
+        row.push(this.parseExpression()); this.match(TokenType.COMMA)
       }
-      row.push(this.parseExpression()); this.match(TokenType.COMMA)
-    }
-    if (row.length) rows.push(row)
-    this.expect(TokenType.RBRACE, "'}'")
-    return { kind: 'cellArray', rows }
+      if (row.length) rows.push(row)
+      this.expect(TokenType.RBRACE, "'}'")
+      return { kind: 'cellArray', rows }
+    } finally { this.bracketCtx.pop() }
   }
 }

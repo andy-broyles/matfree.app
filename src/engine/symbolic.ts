@@ -42,8 +42,12 @@ export function symToString(e: SymExpr): string {
     case 'var': return e.name
     case 'neg': return isNum(e.arg) || isVar(e.arg) ? `-${symToString(e.arg)}` : `-(${symToString(e.arg)})`
     case 'add': {
-      const r = symToString(e.right)
-      if (e.right.kind === 'neg') return `${wrap(e.left, e)} - ${symToString(e.right.arg)}`
+      if (e.right.kind === 'neg') {
+        const inner = e.right.arg
+        const s = symToString(inner)
+        // Parenthesize subtracted sums: a - (b + c), never a - b + c
+        return `${wrap(e.left, e)} - ${inner.kind === 'add' ? `(${s})` : s}`
+      }
       if (e.right.kind === 'num' && e.right.value < 0) return `${wrap(e.left, e)} - ${Math.abs(e.right.value)}`
       return `${wrap(e.left, e)} + ${wrap(e.right, e)}`
     }
@@ -175,6 +179,11 @@ function simplifyOnce(e: SymExpr): SymExpr {
       if (isNum(l, 0)) return r
       if (isNum(r, 0)) return l
       if (isNum(l) && isNum(r)) return N((l as any).value + (r as any).value)
+      // Flatten subtracted sums: a - (b + c) = (a - b) - c (signs preserved;
+      // double negation inside collapses via the 'neg' rule)
+      if (r.kind === 'neg' && r.arg.kind === 'add') {
+        return simplifyOnce(ADD(ADD(l, NEG(r.arg.left)), NEG(r.arg.right)))
+      }
       // Do NOT convert add(l, neg(r)) to add(l, r) - that would flip the sign of r
       if (eq(l, r)) return simplifyOnce(MUL(N(2), l))
       // Collect like terms: a*x + b*x = (a+b)*x
@@ -190,6 +199,9 @@ function simplifyOnce(e: SymExpr): SymExpr {
       if (isNum(r, 1)) return l
       if (isNum(l, -1)) return simplifyOnce(NEG(r))
       if (isNum(l) && isNum(r)) return N((l as any).value * (r as any).value)
+      // Hoist negation out of products: a*(-b) = -(a*b), (-a)*b = -(a*b)
+      if (r.kind === 'neg') return simplifyOnce(NEG(MUL(l, r.arg)))
+      if (l.kind === 'neg') return simplifyOnce(NEG(MUL(l.arg, r)))
       if (eq(l, r)) return simplifyOnce(POW(l, N(2)))
       // x^a * x^b = x^(a+b)
       if (l.kind === 'pow' && r.kind === 'pow' && eq(l.base, r.base))
@@ -205,6 +217,8 @@ function simplifyOnce(e: SymExpr): SymExpr {
       if (isNum(d, 1)) return n
       if (eq(n, d)) return N(1)
       if (isNum(n) && isNum(d)) return N((n as any).value / (d as any).value)
+      // (a/b)/c = a/(b*c)
+      if (n.kind === 'div') return simplifyOnce(DIV(n.num, MUL(n.den, d)))
       // x^a / x^b = x^(a-b)
       if (n.kind === 'pow' && d.kind === 'pow' && eq(n.base, d.base))
         return simplifyOnce(POW(n.base, simplifyOnce(ADD(n.exp, NEG(d.exp)))))
@@ -338,7 +352,12 @@ function integrateRaw(e: SymExpr, x: string): SymExpr {
       // c * f(x) -> c * int(f)
       if (!containsVar(e.left, x)) return MUL(e.left, integrateRaw(e.right, x))
       if (!containsVar(e.right, x)) return MUL(e.right, integrateRaw(e.left, x))
-      // Try integration by parts for simple cases
+      // Integration by parts: p(x) * g(x) where p is polynomial and g is
+      // repeatedly integrable (exp/sin/cos/...). Each step lowers the
+      // polynomial degree by one, so the recursion terminates.
+      const dl = polyDegree(e.left, x), dr = polyDegree(e.right, x)
+      if (dl !== null && dr === null) { const r = tryByParts(e.left, e.right, x); if (r) return r }
+      if (dr !== null && dl === null) { const r = tryByParts(e.right, e.left, x); if (r) return r }
       break
     }
 
@@ -394,6 +413,45 @@ function integrateRaw(e: SymExpr, x: string): SymExpr {
 
   // Fallback: can't integrate symbolically
   throw new RuntimeError(`Cannot symbolically integrate: ${symToString(e)}`)
+}
+
+/** Degree of e as a polynomial in x, or null if e is not polynomial in x. */
+function polyDegree(e: SymExpr, x: string): number | null {
+  if (!containsVar(e, x)) return 0
+  switch (e.kind) {
+    case 'var': return e.name === x ? 1 : 0
+    case 'neg': return polyDegree(e.arg, x)
+    case 'add': {
+      const l = polyDegree(e.left, x), r = polyDegree(e.right, x)
+      return l === null || r === null ? null : Math.max(l, r)
+    }
+    case 'mul': {
+      const l = polyDegree(e.left, x), r = polyDegree(e.right, x)
+      return l === null || r === null ? null : l + r
+    }
+    case 'pow': {
+      if (e.exp.kind === 'num' && Number.isInteger(e.exp.value) && e.exp.value >= 0) {
+        const b = polyDegree(e.base, x)
+        return b === null ? null : b * e.exp.value
+      }
+      return null
+    }
+    case 'div': {
+      if (!containsVar(e.den, x)) return polyDegree(e.num, x)
+      return null
+    }
+    default: return null
+  }
+}
+
+/** Integration by parts: int(u * g) = u*v - int(u' * v), with v = int(g). */
+function tryByParts(u: SymExpr, g: SymExpr, x: string): SymExpr | null {
+  let v: SymExpr
+  try { v = integrateRaw(g, x) } catch { return null }
+  const du = differentiate(u, x)
+  let rest: SymExpr
+  try { rest = integrateRaw(simplify(MUL(du, v)), x) } catch { return null }
+  return ADD(MUL(u, v), NEG(rest))
 }
 
 function getLinearCoeff(e: SymExpr, x: string): number | null {

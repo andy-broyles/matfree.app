@@ -24,6 +24,9 @@ export class Matrix {
   data: number[]
   rows: number
   cols: number
+  /** Optional imaginary parts (same layout as data). Set by fft(); consumed by
+   *  abs(), ifft(), fftshift(). Other operations act on the real part only. */
+  imag?: number[]
 
   constructor(rows: number, cols: number, data?: number[]) {
     assertAllocSize(rows * cols, `${rows}x${cols} matrix`)

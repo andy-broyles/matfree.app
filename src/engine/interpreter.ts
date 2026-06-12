@@ -32,6 +32,10 @@ export class Interpreter {
   private deadline = 0
   private callDepth = 0
   private static readonly MAX_CALL_DEPTH = 200
+  // Multi-output support: [a, b] = f(...) sets nargoutHint before evaluating the
+  // RHS call; the call consumes it and exposes it to builtins via getNargout().
+  private nargoutHint = 1
+  private activeNargout = 1
 
   constructor() {
     this.env = this.globalEnv
@@ -51,6 +55,8 @@ export class Interpreter {
   setOutput(cb: OutputCallback) { this.output = cb }
   /** Set the wall-clock budget for a single execute() call. 0 disables the limit. */
   setExecutionLimitMs(ms: number) { this.maxExecutionMs = ms }
+  /** Number of outputs requested from the builtin currently executing (1 unless destructured). */
+  getNargout(): number { return this.activeNargout }
   setPlotCallback(cb: PlotCallback) { this.plotCallback = cb }
   print(text: string) { this.output(text) }
   currentEnv(): Environment { return this.env }
@@ -101,14 +107,23 @@ export class Interpreter {
     return result
   }
 
-  callBuiltin(name: string, args: Value[]): Value {
+  callBuiltin(name: string, args: Value[], nargout = 1): Value {
     const fn = getBuiltin(name)
     if (!fn) throw new RuntimeError(`Unknown function '${name}'`)
-    return fn(args, this)
+    const saved = this.activeNargout
+    this.activeNargout = nargout
+    try { return fn(args, this) }
+    finally { this.activeNargout = saved }
   }
 
-  callFuncHandle(fh: FuncHandle, args: Value[]): Value {
-    if (fh.type === 'builtin') return this.callBuiltin(fh.name, args)
+  callFuncHandle(fh: FuncHandle, args: Value[], nargout = 1): Value {
+    if (fh.type === 'builtin') {
+      // @name handles to user functions are also stored with type 'builtin';
+      // user functions shadow builtins, matching call-by-name resolution.
+      const userFn = this.userFunctions.get(fh.name)
+      if (userFn) return this.callUserFunc(userFn, args, nargout)
+      return this.callBuiltin(fh.name, args, nargout)
+    }
     this.checkDeadline()
     // Anonymous function
     const child = (fh.closure as Environment).createChild()
@@ -206,17 +221,29 @@ export class Interpreter {
   }
 
   private execMultiAssign(stmt: Extract<Stmt, { kind: 'multiAssign' }>): Value {
-    const val = this.evalExpr(stmt.value)
-    // For now, just assign first value to first target
-    if (val.isMatrix()) {
-      const m = val.matrix()
-      for (let i = 0; i < stmt.targets.length; i++) {
-        if (stmt.targets[i] === '~') continue
-        if (i === 0) this.env.set(stmt.targets[i], val)
-        else this.env.set(stmt.targets[i], Value.fromScalar(i < m.numel() ? m.data[i] : 0))
-      }
+    const n = stmt.targets.length
+    // Request n outputs only when the RHS is a direct call — `[a,b] = 2 + f(x)`
+    // should not propagate the hint into the subexpression.
+    if (stmt.value.kind === 'call') this.nargoutHint = n
+    let val: Value
+    try { val = this.evalExpr(stmt.value) }
+    finally { this.nargoutHint = 1 }
+    if (n === 1) {
+      if (stmt.targets[0] !== '~') this.env.set(stmt.targets[0], val)
+      return val
     }
-    return val
+    // Multi-output functions return a cell of outputs; distribute across targets.
+    if (val.isCell()) {
+      const c = val.cell()
+      if (c.data.length < n) {
+        throw new RuntimeError(`Too many output arguments: requested ${n}, function returned ${c.data.length}`)
+      }
+      for (let i = 0; i < n; i++) {
+        if (stmt.targets[i] !== '~') this.env.set(stmt.targets[i], c.data[i])
+      }
+      return c.data[0]
+    }
+    throw new RuntimeError(`Too many output arguments: requested ${n}, function returned 1`)
   }
 
   private execIf(stmt: Extract<Stmt, { kind: 'if' }>): Value {
@@ -407,27 +434,30 @@ export class Interpreter {
   }
 
   private evalCall(expr: Extract<Expr, { kind: 'call' }>): Value {
+    // Consume the multi-output hint; nested calls (in args) must not inherit it.
+    const nargout = this.nargoutHint
+    this.nargoutHint = 1
     // Check if callee is an identifier
     if (expr.callee.kind === 'identifier') {
       const name = expr.callee.name
       // Check if it's a variable (could be func handle or matrix)
       const variable = this.env.get(name)
       if (variable) {
-        if (variable.isFuncHandle()) return this.callFuncHandle(variable.funcHandle(), expr.args.map(a => this.evalExpr(a)))
+        if (variable.isFuncHandle()) return this.callFuncHandle(variable.funcHandle(), expr.args.map(a => this.evalExpr(a)), nargout)
         if (variable.isMatrix()) return this.indexMatrix(variable.matrix(), expr.args)
         if (variable.isCell()) return this.indexCell(variable.cell(), expr.args)
         if (variable.isStruct()) return variable // struct() call
       }
       // Check user functions
       const fn = this.userFunctions.get(name)
-      if (fn) return this.callUserFunc(fn, expr.args.map(a => this.evalExpr(a)))
+      if (fn) return this.callUserFunc(fn, expr.args.map(a => this.evalExpr(a)), nargout)
       // Check builtins
-      if (hasBuiltin(name)) return this.callBuiltin(name, expr.args.map(a => this.evalExpr(a)))
+      if (hasBuiltin(name)) return this.callBuiltin(name, expr.args.map(a => this.evalExpr(a)), nargout)
       throw new RuntimeError(`Undefined function '${name}'`)
     }
     // Dynamic call (e.g., result of expression)
     const callee = this.evalExpr(expr.callee)
-    if (callee.isFuncHandle()) return this.callFuncHandle(callee.funcHandle(), expr.args.map(a => this.evalExpr(a)))
+    if (callee.isFuncHandle()) return this.callFuncHandle(callee.funcHandle(), expr.args.map(a => this.evalExpr(a)), nargout)
     throw new RuntimeError('Cannot call non-function value')
   }
 
@@ -438,7 +468,8 @@ export class Interpreter {
         // A(:) - flatten
         return Value.fromMatrix(new Matrix(m.numel(), 1, [...m.data]))
       }
-      const idx = this.evalExpr(arg)
+      // resolveEnd (not evalExpr) so `v(end)` / `v(end-1)` work with one index
+      const idx = this.resolveEnd(arg, m.numel())
       if (idx.isMatrix()) {
         const idxM = idx.matrix()
         if (idxM.isScalar()) {
@@ -537,7 +568,7 @@ export class Interpreter {
     return Value.fromMatrix(new Matrix(1, vals.length, vals))
   }
 
-  private callUserFunc(fn: Extract<Stmt, { kind: 'functionDef' }>, args: Value[]): Value {
+  private callUserFunc(fn: Extract<Stmt, { kind: 'functionDef' }>, args: Value[], nargout = 1): Value {
     if (++this.callDepth > Interpreter.MAX_CALL_DEPTH) {
       this.callDepth--
       throw new RuntimeError(`Maximum recursion depth exceeded (${Interpreter.MAX_CALL_DEPTH}) in function '${fn.name}'`)
@@ -546,11 +577,16 @@ export class Interpreter {
     const child = this.globalEnv.createChild()
     for (let i = 0; i < fn.params.length; i++) child.set(fn.params[i], args[i] ?? Value.empty())
     child.set('nargin', Value.fromScalar(args.length))
-    child.set('nargout', Value.fromScalar(fn.returns.length))
+    child.set('nargout', Value.fromScalar(Math.max(1, Math.min(nargout, fn.returns.length))))
     const saved = this.env; this.env = child
     try { this.execBlock(fn.body) }
     catch (e) { if (!(e instanceof ReturnSignal)) throw e }
     finally { this.env = saved; this.callDepth-- }
+    if (nargout > 1 && fn.returns.length > 1) {
+      const k = Math.min(nargout, fn.returns.length)
+      const outs = fn.returns.slice(0, k).map(r => child.get(r) ?? Value.empty())
+      return Value.fromCell({ rows: 1, cols: k, data: outs })
+    }
     if (fn.returns.length > 0) return child.get(fn.returns[0]) ?? Value.empty()
     return Value.empty()
   }

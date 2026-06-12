@@ -9,8 +9,14 @@ type BFn = (args: Value[], interp: Interpreter) => Value
 const fns: Map<string, BFn> = new Map()
 function reg(name: string, fn: BFn) { fns.set(name, fn) }
 
-function num(v: Value): number { return v.toScalar() }
-function mat(v: Value): Matrix { return v.toMatrix() }
+function num(v: Value): number {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toScalar()
+}
+function mat(v: Value): Matrix {
+  if (v === undefined) throw new RuntimeError('Missing required argument')
+  return v.toMatrix()
+}
 
 // ═══════════════════════════════════════════════════════════════
 // FFT / Signal Processing
@@ -66,24 +72,31 @@ function ifftReal(re: number[], im: number[]): [number[], number[]] {
 
 reg('fft', (a) => {
   const m = mat(a[0])
-  const re = [...m.data], im = new Array(m.numel()).fill(0)
-  const [outRe] = fftReal(re, im)
-  // Return magnitude for simplicity (full complex support later)
-  return Value.fromMatrix(new Matrix(1, outRe.length, outRe))
+  const re = [...m.data], im = m.imag ? [...m.imag] : new Array(m.numel()).fill(0)
+  const [outRe, outIm] = fftReal(re, im)
+  // Complex result: real parts in data, imaginary parts alongside,
+  // so abs(fft(x)) gives true magnitudes and ifft(fft(x)) == x.
+  const result = new Matrix(1, outRe.length, outRe)
+  result.imag = outIm
+  return Value.fromMatrix(result)
 })
 
 reg('ifft', (a) => {
   const m = mat(a[0])
-  const re = [...m.data], im = new Array(m.numel()).fill(0)
-  const [outRe] = ifftReal(re, im)
-  return Value.fromMatrix(new Matrix(1, outRe.length, outRe))
+  const re = [...m.data], im = m.imag ? [...m.imag] : new Array(m.numel()).fill(0)
+  const [outRe, outIm] = ifftReal(re, im)
+  const result = new Matrix(1, outRe.length, outRe)
+  if (outIm.some(v => Math.abs(v) > 1e-9)) result.imag = outIm
+  return Value.fromMatrix(result)
 })
 
 reg('fftshift', (a) => {
   const m = mat(a[0])
   const d = [...m.data], n = d.length, half = Math.floor(n / 2)
   const shifted = [...d.slice(half), ...d.slice(0, half)]
-  return Value.fromMatrix(new Matrix(m.rows, m.cols, shifted))
+  const result = new Matrix(m.rows, m.cols, shifted)
+  if (m.imag) result.imag = [...m.imag.slice(half), ...m.imag.slice(0, half)]
+  return Value.fromMatrix(result)
 })
 
 reg('abs_fft', (a) => {
@@ -222,8 +235,8 @@ reg('ode45', (a, interp) => {
   const y0 = mat(a[2]).data
   const t0 = tspan[0], tf = tspan[tspan.length - 1]
   const dim = y0.length
-  let h = (tf - t0) / 200
-  const tol = 1e-6
+  let h = (tf - t0) / 100
+  const rtol = 1e-6, atol = 1e-9
 
   const ts: number[] = [t0]
   const ys: number[][] = [[...y0]]
@@ -237,28 +250,55 @@ reg('ode45', (a, interp) => {
     return [...result.toMatrix().data]
   }
 
-  // Classic RK4 with adaptive step
+  // Dormand-Prince 5(4) embedded pair — the actual ode45 method.
+  // Butcher tableau coefficients:
+  const A = [
+    [],
+    [1 / 5],
+    [3 / 40, 9 / 40],
+    [44 / 45, -56 / 15, 32 / 9],
+    [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729],
+    [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656],
+    [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84],
+  ]
+  const C = [0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1, 1]
+  const B5 = [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]        // 5th order
+  const B4 = [5179 / 57600, 0, 7571 / 16695, 393 / 640, -92097 / 339200, 187 / 2100, 1 / 40] // 4th order
+
   let steps = 0
-  while (t < tf - 1e-14 && steps < 50000) {
+  while (t < tf - 1e-14 && steps < 100000) {
     if (t + h > tf) h = tf - t
-    const k1 = callF(t, y)
-    const k2 = callF(t + h / 2, y.map((v, i) => v + h / 2 * k1[i]))
-    const k3 = callF(t + h / 2, y.map((v, i) => v + h / 2 * k2[i]))
-    const k4 = callF(t + h, y.map((v, i) => v + h * k3[i]))
+    // Compute the 7 stages
+    const k: number[][] = []
+    k.push(callF(t, y))
+    for (let s = 1; s < 7; s++) {
+      const ys2 = y.map((v, i) => {
+        let acc = v
+        for (let j = 0; j < s; j++) acc += h * A[s][j] * k[j][i]
+        return acc
+      })
+      k.push(callF(t + C[s] * h, ys2))
+    }
+    const y5 = y.map((v, i) => { let acc = v; for (let s = 0; s < 7; s++) acc += h * B5[s] * k[s][i]; return acc })
+    const y4 = y.map((v, i) => { let acc = v; for (let s = 0; s < 7; s++) acc += h * B4[s] * k[s][i]; return acc })
 
-    const yNew = y.map((v, i) => v + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]))
-
-    // Simple error estimate via half-step comparison
-    const k1h = callF(t, y)
-    const yHalf1 = y.map((v, i) => v + h / 2 / 6 * (k1h[i] + 2 * k1h[i] + 2 * k1h[i] + k1h[i]))
+    // Scaled error norm
     let err = 0
-    for (let i = 0; i < dim; i++) err = Math.max(err, Math.abs(yNew[i] - yHalf1[i]))
+    for (let i = 0; i < dim; i++) {
+      const sc = atol + rtol * Math.max(Math.abs(y[i]), Math.abs(y5[i]))
+      err = Math.max(err, Math.abs(y5[i] - y4[i]) / sc)
+    }
 
-    if (err > tol * 10 && h > 1e-12) { h *= 0.5; continue }
-    if (err < tol * 0.1) h *= 1.5
+    if (err > 1 && h > 1e-12 * Math.max(1, Math.abs(t))) {
+      h *= Math.max(0.1, 0.9 * Math.pow(err, -0.2)) // reject, shrink
+      steps++
+      continue
+    }
 
-    t += h; y = yNew
+    t += h; y = y5
     ts.push(t); ys.push([...y])
+    // Grow step (capped at 5x)
+    h *= Math.min(5, Math.max(0.2, 0.9 * Math.pow(Math.max(err, 1e-10), -0.2)))
     steps++
   }
 
@@ -328,8 +368,27 @@ reg('cumtrapz', (a) => {
 reg('integral', (a, interp) => {
   const fh = a[0].funcHandle()
   const lo = num(a[1]), hi = num(a[2])
-  const callF = (x: number) => interp.callFuncHandle(fh, [Value.fromScalar(x)]).toScalar()
-  const result = adaptiveSimpson(callF, lo, hi, 1e-10, 20)
+  const rawF = (x: number) => interp.callFuncHandle(fh, [Value.fromScalar(x)]).toScalar()
+  // Guard against NaN/Inf from the integrand at extreme substituted points
+  const safe = (f: (t: number) => number) => (t: number) => { const v = f(t); return Number.isFinite(v) ? v : 0 }
+
+  let result: number
+  const E = 1e-12 // keep substitutions off their singular endpoints
+  if (lo === -Infinity && hi === Infinity) {
+    // x = t/(1-t^2), dx = (1+t^2)/(1-t^2)^2 dt, t in (-1, 1)
+    const g = safe((t: number) => { const d = 1 - t * t; return rawF(t / d) * (1 + t * t) / (d * d) })
+    result = adaptiveSimpson(g, -1 + E, 1 - E, 1e-10, 24)
+  } else if (hi === Infinity) {
+    // x = lo + t/(1-t), dx = 1/(1-t)^2 dt, t in [0, 1)
+    const g = safe((t: number) => { const d = 1 - t; return rawF(lo + t / d) / (d * d) })
+    result = adaptiveSimpson(g, 0, 1 - E, 1e-10, 24)
+  } else if (lo === -Infinity) {
+    // x = hi - t/(1-t), dx = 1/(1-t)^2 dt, t in [0, 1)
+    const g = safe((t: number) => { const d = 1 - t; return rawF(hi - t / d) / (d * d) })
+    result = adaptiveSimpson(g, 0, 1 - E, 1e-10, 24)
+  } else {
+    result = adaptiveSimpson(rawF, lo, hi, 1e-10, 20)
+  }
   return Value.fromScalar(result)
 })
 
@@ -511,19 +570,23 @@ function qrEigenvalues(A: Matrix): Matrix {
   return new Matrix(1, n, eigs)
 }
 
-reg('eig', (a) => {
+reg('eig', (a, interp) => {
   const m = mat(a[0])
   if (m.rows !== m.cols) throw new RuntimeError('eig requires square matrix')
+  // [V, D] = eig(A): delegate to the full decomposition
+  if (interp.getNargout() >= 2) return interp.callBuiltin('eig_full', a)
   return Value.fromMatrix(qrEigenvalues(m))
 })
 
-reg('svd', (a) => {
-  // Simplified: compute singular values via eigenvalues of A'A
+reg('svd', (a, interp) => {
+  // [U, S, V] = svd(A): delegate to the full decomposition
+  if (interp.getNargout() >= 2) return interp.callBuiltin('svd_full', a)
+  // Single output: singular values via eigenvalues of A'A
   const m = mat(a[0])
   const AtA = m.transpose().mul(m)
   const eigVals = qrEigenvalues(AtA)
   const sv = eigVals.data.map(v => Math.sqrt(Math.abs(v))).sort((a, b) => b - a)
-  return Value.fromMatrix(new Matrix(1, sv.length, sv))
+  return Value.fromMatrix(new Matrix(sv.length, 1, sv))
 })
 
 reg('cond', (a) => {
@@ -542,11 +605,8 @@ reg('pinv', (a) => {
   catch { return Value.fromMatrix(At) } // fallback
 })
 
-reg('null_space', (a) => {
-  // Null space approximation
-  const m = mat(a[0])
-  return Value.fromMatrix(Matrix.zeros(m.cols, 1)) // placeholder
-})
+// null_space: real implementation lives in advanced.ts (SVD-based). The
+// scientific registry is consulted first, so no placeholder may live here.
 
 reg('linsolve', (a) => {
   const A = mat(a[0]), b = mat(a[1])
@@ -616,9 +676,16 @@ reg('fminsearch', (a, interp) => {
     simplex.push({ x: p, f: callF(p) })
   }
 
-  for (let iter = 0; iter < 1000; iter++) {
+  for (let iter = 0; iter < 2000; iter++) {
     simplex.sort((a, b) => a.f - b.f)
-    if (Math.abs(simplex[n].f - simplex[0].f) < 1e-10) break
+    // Converge on BOTH function spread and simplex size — f-spread alone
+    // terminates early when vertices straddle the minimum symmetrically.
+    const fConverged = Math.abs(simplex[n].f - simplex[0].f) < 1e-12 * (1 + Math.abs(simplex[0].f))
+    let diam = 0
+    for (let i = 1; i <= n; i++)
+      for (let j = 0; j < n; j++)
+        diam = Math.max(diam, Math.abs(simplex[i].x[j] - simplex[0].x[j]))
+    if (fConverged && diam < 1e-8 * (1 + Math.abs(simplex[0].x.reduce((s, v) => s + Math.abs(v), 0)))) break
 
     // Centroid (excluding worst)
     const c = new Array(n).fill(0)
@@ -799,10 +866,12 @@ reg('tril', (a) => {
 })
 
 reg('magic', (a) => {
-  const n = num(a[0])
+  const n = Math.floor(num(a[0]))
   if (n < 1) throw new RuntimeError('magic: n must be >= 1')
   if (n === 1) return Value.fromScalar(1)
+  if (n === 2) return Value.fromMatrix(new Matrix(2, 2, [1, 3, 4, 2])) // no true 2x2 magic square exists; MATLAB returns this
   if (n % 2 === 1) {
+    // Odd order: siamese method
     const m = Matrix.zeros(n, n)
     let r = 0, c = Math.floor(n / 2)
     for (let i = 1; i <= n * n; i++) {
@@ -811,9 +880,47 @@ reg('magic', (a) => {
     }
     return Value.fromMatrix(m)
   }
-  // Even order: simplified
+  if (n % 4 === 0) {
+    // Doubly-even: fill sequentially, then complement cells where
+    // (r mod 4, c mod 4) lies on the main/anti block diagonals
+    const m = Matrix.zeros(n, n)
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      const v = r * n + c + 1
+      const rm = r % 4, cm = c % 4
+      const onPattern = (rm === cm) || (rm + cm === 3)
+      m.set(r, c, onPattern ? n * n + 1 - v : v)
+    }
+    return Value.fromMatrix(m)
+  }
+  // Singly-even (n = 4k+2): LUX method built on the odd magic square of size n/2
+  const half = n / 2
+  const odd = Matrix.zeros(half, half)
+  {
+    let r = 0, c = Math.floor(half / 2)
+    for (let i = 1; i <= half * half; i++) {
+      odd.set(r, c, i); const nr = (r - 1 + half) % half, nc = (c + 1) % half
+      if (odd.get(nr, nc) !== 0) r = (r + 1) % half; else { r = nr; c = nc }
+    }
+  }
   const m = Matrix.zeros(n, n)
-  for (let i = 0; i < n * n; i++) m.data[i] = i + 1
+  const k = (n - 2) / 4
+  for (let r = 0; r < half; r++) {
+    for (let c = 0; c < half; c++) {
+      const base = (odd.get(r, c) - 1) * 4
+      // L for rows < k, U for row k (except center swap), X for rows > k+1
+      let kind: 'L' | 'U' | 'X'
+      if (r < k) kind = 'L'
+      else if (r === k) kind = c === Math.floor(half / 2) ? 'U' : 'L'
+      else if (r === k + 1) kind = c === Math.floor(half / 2) ? 'L' : 'U'
+      else kind = 'X'
+      // L: 4 1 / 2 3   U: 1 4 / 2 3   X: 1 4 / 3 2
+      const quad = kind === 'L' ? [4, 1, 2, 3] : kind === 'U' ? [1, 4, 2, 3] : [1, 4, 3, 2]
+      m.set(2 * r, 2 * c, base + quad[0])
+      m.set(2 * r, 2 * c + 1, base + quad[1])
+      m.set(2 * r + 1, 2 * c, base + quad[2])
+      m.set(2 * r + 1, 2 * c + 1, base + quad[3])
+    }
+  }
   return Value.fromMatrix(m)
 })
 
@@ -832,7 +939,7 @@ reg('logspace', (a) => {
 })
 
 reg('meshgrid', (a) => {
-  const x = mat(a[0]).data, y = mat(a[1]).data
+  const x = mat(a[0]).data, y = a.length > 1 ? mat(a[1]).data : mat(a[0]).data // meshgrid(x) == meshgrid(x, x)
   const X = new Matrix(y.length, x.length)
   const Y = new Matrix(y.length, x.length)
   for (let r = 0; r < y.length; r++) for (let c = 0; c < x.length; c++) { X.set(r, c, x[c]); Y.set(r, c, y[r]) }
