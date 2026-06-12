@@ -4,12 +4,29 @@ export class RuntimeError extends Error {
   constructor(msg: string) { super(msg); this.name = 'RuntimeError' }
 }
 
+// Cap matrix allocations so runaway expressions (e.g. `1:1e9`, `zeros(1e5)`)
+// fail with a clear error instead of freezing the tab or throwing a raw
+// JS "Invalid array length". 5e7 elements ≈ 400 MB of doubles.
+export const MAX_MATRIX_ELEMENTS = 5e7
+
+/** Throws a clear RuntimeError if an allocation of n elements would exceed the cap. */
+export function assertAllocSize(n: number, what = 'Matrix'): void {
+  if (!Number.isFinite(n) || n < 0) throw new RuntimeError(`Invalid ${what} size (${n} elements)`)
+  if (n > MAX_MATRIX_ELEMENTS) {
+    throw new RuntimeError(
+      `${what} too large: ${n.toExponential(1)} elements exceeds the ` +
+      `${MAX_MATRIX_ELEMENTS.toExponential(0)} element limit`
+    )
+  }
+}
+
 export class Matrix {
   data: number[]
   rows: number
   cols: number
 
   constructor(rows: number, cols: number, data?: number[]) {
+    assertAllocSize(rows * cols, `${rows}x${cols} matrix`)
     this.rows = rows; this.cols = cols
     this.data = data ?? new Array(rows * cols).fill(0)
   }

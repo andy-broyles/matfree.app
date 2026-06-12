@@ -23,7 +23,7 @@ The web version runs entirely in the browser using a TypeScript engine. A native
           │                        │                        │
   ┌───────▼───────┐    ┌──────────▼──────────┐   ┌────────▼────────┐
   │  Value System  │    │  Built-in Functions  │   │   Environment   │
-  │ Matrix, String │    │  100+ functions      │   │  Scope/Vars     │
+  │ Matrix, String │    │  200+ functions      │   │  Scope/Vars     │
   │ Cell, Struct   │    │  Math, LA, Stats     │   │  Global/Local   │
   └───────────────┘    └─────────────────────┘   └─────────────────┘
 ```
@@ -46,7 +46,7 @@ Tree-walking interpreter that executes the AST. Handles variable assignment, fun
 Runtime value types: Matrix (dense 2D), String, CellArray, Struct, FunctionHandle. Includes full matrix arithmetic with broadcasting.
 
 ### Built-in Functions (`src/engine/builtins.ts`)
-100+ built-in functions covering math, linear algebra, statistics, string operations, I/O, and more.
+200+ built-in functions covering math, linear algebra, statistics, signal processing, symbolic math, string operations, I/O, and more.
 
 ### Environment (`src/engine/environment.ts`)
 Lexical scoping with global/local variable management.

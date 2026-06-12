@@ -104,7 +104,7 @@ export default function Home() {
             <div className={styles.feature}>
               <div className={styles.featureIcon}>$0</div>
               <h3>Free Forever</h3>
-              <p>No subscriptions. No seat licenses. No vendor lock-in. Runs entirely in your browser. Your data never leaves your machine.</p>
+              <p>No subscriptions. No seat licenses. No vendor lock-in. All computation runs locally in your browser &mdash; your code and data are never uploaded to a server.</p>
             </div>
           </div>
         </section>

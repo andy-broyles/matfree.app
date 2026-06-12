@@ -4,7 +4,7 @@ import { Lexer } from './lexer'
 import { Parser } from './parser'
 import { Expr, Stmt, Program } from './ast'
 import { TokenType } from './token'
-import { Value, Matrix, RuntimeError, FuncHandle, CellArray } from './value'
+import { Value, Matrix, RuntimeError, FuncHandle, CellArray, assertAllocSize } from './value'
 import { Environment } from './environment'
 import { getBuiltin, hasBuiltin } from './builtins'
 import type { PlotFigure, PlotCallback } from './plot'
@@ -25,6 +25,13 @@ export class Interpreter {
   private plotCallback: PlotCallback = () => {}
   private figures: Map<number, PlotFigure> = new Map()
   private currentFigureId = 1
+  // Execution guards: wall-clock budget per execute() call and recursion depth cap.
+  // The engine runs on the UI thread, so a runaway `while true` would otherwise
+  // freeze the tab — and playground code can arrive from shared ?code= URLs.
+  private maxExecutionMs = 10_000
+  private deadline = 0
+  private callDepth = 0
+  private static readonly MAX_CALL_DEPTH = 200
 
   constructor() {
     this.env = this.globalEnv
@@ -42,6 +49,8 @@ export class Interpreter {
   }
 
   setOutput(cb: OutputCallback) { this.output = cb }
+  /** Set the wall-clock budget for a single execute() call. 0 disables the limit. */
+  setExecutionLimitMs(ms: number) { this.maxExecutionMs = ms }
   setPlotCallback(cb: PlotCallback) { this.plotCallback = cb }
   print(text: string) { this.output(text) }
   currentEnv(): Environment { return this.env }
@@ -66,7 +75,18 @@ export class Interpreter {
     this.plotCallback({ ...fig, series: [...fig.series] })
   }
 
+  private checkDeadline(): void {
+    if (this.deadline > 0 && Date.now() > this.deadline) {
+      throw new RuntimeError(
+        `Execution time limit exceeded (${this.maxExecutionMs / 1000}s). ` +
+        'Check for infinite loops, or reduce the problem size.'
+      )
+    }
+  }
+
   execute(code: string): Value {
+    this.deadline = this.maxExecutionMs > 0 ? Date.now() + this.maxExecutionMs : 0
+    this.callDepth = 0
     const lexer = new Lexer(code)
     const tokens = lexer.tokenize()
     const parser = new Parser(tokens)
@@ -89,6 +109,7 @@ export class Interpreter {
 
   callFuncHandle(fh: FuncHandle, args: Value[]): Value {
     if (fh.type === 'builtin') return this.callBuiltin(fh.name, args)
+    this.checkDeadline()
     // Anonymous function
     const child = (fh.closure as Environment).createChild()
     for (let i = 0; i < fh.params.length; i++) child.set(fh.params[i], args[i] ?? Value.empty())
@@ -218,7 +239,7 @@ export class Interpreter {
         for (let r = 0; r < m.rows; r++) col.set(r, 0, m.get(r, c))
         this.env.set(stmt.variable, Value.fromMatrix(col))
       }
-      try { this.execBlock(stmt.body) }
+      try { this.checkDeadline(); this.execBlock(stmt.body) }
       catch (e) {
         if (e instanceof BreakSignal) break
         if (e instanceof ContinueSignal) continue
@@ -230,7 +251,7 @@ export class Interpreter {
 
   private execWhile(stmt: Extract<Stmt, { kind: 'while' }>): Value {
     while (this.evalExpr(stmt.condition).toBool()) {
-      try { this.execBlock(stmt.body) }
+      try { this.checkDeadline(); this.execBlock(stmt.body) }
       catch (e) {
         if (e instanceof BreakSignal) break
         if (e instanceof ContinueSignal) continue
@@ -471,6 +492,8 @@ export class Interpreter {
       const start = expr.start ? this.resolveEnd(expr.start, size).toScalar() : 1
       const stop = expr.stop ? this.resolveEnd(expr.stop, size).toScalar() : size
       const step = expr.step ? this.resolveEnd(expr.step, size).toScalar() : 1
+      const count = step !== 0 ? Math.floor((stop - start) / step) + 1 : 0
+      if (count > 0) assertAllocSize(count, 'Range') // empty/NaN ranges fall through harmlessly
       const vals: number[] = []
       if (step > 0) for (let v = start; v <= stop + 1e-10; v += step) vals.push(v)
       else if (step < 0) for (let v = start; v >= stop - 1e-10; v += step) vals.push(v)
@@ -505,14 +528,21 @@ export class Interpreter {
     const start = expr.start ? this.evalExpr(expr.start).toScalar() : 0
     const stop = expr.stop ? this.evalExpr(expr.stop).toScalar() : 0
     const step = expr.step ? this.evalExpr(expr.step).toScalar() : 1
+    if (step === 0) throw new RuntimeError('Range step cannot be zero')
+    const count = Math.floor((stop - start) / step) + 1
+    if (count > 0) assertAllocSize(count, 'Range') // empty/NaN ranges fall through harmlessly
     const vals: number[] = []
     if (step > 0) { for (let v = start; v <= stop + 1e-10; v += step) vals.push(v) }
     else if (step < 0) { for (let v = start; v >= stop - 1e-10; v += step) vals.push(v) }
-    else throw new RuntimeError('Range step cannot be zero')
     return Value.fromMatrix(new Matrix(1, vals.length, vals))
   }
 
   private callUserFunc(fn: Extract<Stmt, { kind: 'functionDef' }>, args: Value[]): Value {
+    if (++this.callDepth > Interpreter.MAX_CALL_DEPTH) {
+      this.callDepth--
+      throw new RuntimeError(`Maximum recursion depth exceeded (${Interpreter.MAX_CALL_DEPTH}) in function '${fn.name}'`)
+    }
+    this.checkDeadline()
     const child = this.globalEnv.createChild()
     for (let i = 0; i < fn.params.length; i++) child.set(fn.params[i], args[i] ?? Value.empty())
     child.set('nargin', Value.fromScalar(args.length))
@@ -520,7 +550,7 @@ export class Interpreter {
     const saved = this.env; this.env = child
     try { this.execBlock(fn.body) }
     catch (e) { if (!(e instanceof ReturnSignal)) throw e }
-    finally { this.env = saved }
+    finally { this.env = saved; this.callDepth-- }
     if (fn.returns.length > 0) return child.get(fn.returns[0]) ?? Value.empty()
     return Value.empty()
   }

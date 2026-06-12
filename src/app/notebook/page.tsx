@@ -461,8 +461,14 @@ const tbBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: '#666680', cursor: 'pointer', fontSize: 11, padding: '2px 6px',
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 function simpleMarkdown(md: string): string {
-  let html = md
+  // Escape HTML first — cell content is user input rendered via dangerouslySetInnerHTML,
+  // so raw <script>/<img onerror> must never survive into the output.
+  let html = escapeHtml(md)
   html = html.replace(/^### (.+)$/gm, '<h3 style="margin:8px 0;font-size:16px">$1</h3>')
   html = html.replace(/^## (.+)$/gm, '<h2 style="margin:8px 0;font-size:20px">$1</h2>')
   html = html.replace(/^# (.+)$/gm, '<h1 style="margin:8px 0;font-size:24px;color:#e4e4ef">$1</h1>')
