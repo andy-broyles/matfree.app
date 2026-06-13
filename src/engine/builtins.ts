@@ -22,6 +22,39 @@ function mat(v: Value): Matrix {
   return v.toMatrix()
 }
 
+// ─── MATLAB reduction semantics ──────────────────────────────────────────────
+// Vectors reduce to a scalar; matrices reduce column-wise to a row vector.
+// An explicit dim argument (1 = down columns, 2 = across rows) overrides.
+
+function isVecM(m: Matrix): boolean { return m.rows === 1 || m.cols === 1 }
+
+/** Slices of m along dim: dim 1 yields each column, dim 2 yields each row. */
+function dimSlices(m: Matrix, dim: number): number[][] {
+  const out: number[][] = []
+  if (dim === 2) {
+    for (let r = 0; r < m.rows; r++) { const v: number[] = []; for (let c = 0; c < m.cols; c++) v.push(m.get(r, c)); out.push(v) }
+  } else {
+    for (let c = 0; c < m.cols; c++) { const v: number[] = []; for (let r = 0; r < m.rows; r++) v.push(m.get(r, c)); out.push(v) }
+  }
+  return out
+}
+
+function reduceDim(m: Matrix, dimArg: number | null, fn: (v: number[]) => number): Value {
+  if (dimArg === null && isVecM(m)) return Value.fromScalar(fn([...m.data]))
+  const dim = dimArg ?? 1
+  const vals = dimSlices(m, dim).map(fn)
+  return Value.fromMatrix(dim === 2 ? new Matrix(vals.length, 1, vals) : new Matrix(1, vals.length, vals))
+}
+
+function dimOf(a: Value[], i: number): number | null {
+  return a.length > i && a[i] !== undefined ? Math.floor(a[i].toScalar()) : null
+}
+
+function sampleVariance(v: number[]): number {
+  const mu = v.reduce((s, x) => s + x, 0) / v.length
+  return v.reduce((s, x) => s + (x - mu) ** 2, 0) / Math.max(1, v.length - 1)
+}
+
 // Math functions
 reg('sin', (a) => applyElem(a[0], Math.sin))
 reg('cos', (a) => applyElem(a[0], Math.cos))
@@ -54,40 +87,66 @@ reg('fix', (a) => applyElem(a[0], (v) => v > 0 ? Math.floor(v) : Math.ceil(v)))
 reg('mod', (a) => { const m1 = mat(a[0]), m2 = mat(a[1]); return Value.fromMatrix(new Matrix(m1.rows, m1.cols, m1.data.map((v, i) => v - Math.floor(v / m2.data[i % m2.data.length]) * m2.data[i % m2.data.length]))) })
 reg('rem', (a) => Value.fromScalar(num(a[0]) % num(a[1])))
 reg('sign', (a) => applyElem(a[0], Math.sign))
-reg('max', (a, interp) => {
-  if (a.length === 1) {
-    const m = mat(a[0])
-    if (interp.getNargout() >= 2) {
-      let best = -Infinity, idx = 0
-      for (let i = 0; i < m.data.length; i++) if (m.data[i] > best) { best = m.data[i]; idx = i }
-      return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromScalar(best), Value.fromScalar(idx + 1)] })
+// max/min: extremum(A), [m,i] = extremum(A), extremum(A,B) elementwise,
+// extremum(A,[],dim). Vector → scalar; matrix → column-wise (MATLAB).
+function extremum(a: Value[], interp: Interpreter, better: (x: number, y: number) => boolean): Value {
+  // Two-arg elementwise with broadcasting: max(A, B)
+  if (a.length === 2 && a[1] !== undefined && mat(a[1]).numel() > 0) {
+    const m1 = mat(a[0]), m2 = mat(a[1])
+    const rr = Math.max(m1.rows, m2.rows), cc = Math.max(m1.cols, m2.cols)
+    const r = new Matrix(rr, cc)
+    for (let i = 0; i < rr; i++) for (let j = 0; j < cc; j++) {
+      const x = m1.getWithBroadcast(i, j), y = m2.getWithBroadcast(i, j)
+      r.set(i, j, better(x, y) ? x : y)
     }
-    return Value.fromScalar(m.maxVal())
+    return r.isScalar() ? Value.fromScalar(r.scalarValue()) : Value.fromMatrix(r)
   }
-  return Value.fromScalar(Math.max(num(a[0]), num(a[1])))
-})
-reg('min', (a, interp) => {
-  if (a.length === 1) {
-    const m = mat(a[0])
-    if (interp.getNargout() >= 2) {
-      let best = Infinity, idx = 0
-      for (let i = 0; i < m.data.length; i++) if (m.data[i] < best) { best = m.data[i]; idx = i }
-      return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromScalar(best), Value.fromScalar(idx + 1)] })
-    }
-    return Value.fromScalar(m.minVal())
+  // max(A) / max(A, [], dim)
+  const m = mat(a[0])
+  const dimArg = dimOf(a, 2)
+  const wantIdx = interp.getNargout() >= 2
+  const pick = (v: number[]): [number, number] => {
+    let bi = 0
+    for (let i = 1; i < v.length; i++) if (better(v[i], v[bi])) bi = i
+    return [v[bi], bi + 1] // 1-based index
   }
-  return Value.fromScalar(Math.min(num(a[0]), num(a[1])))
-})
-reg('sum', (a) => Value.fromScalar(mat(a[0]).sum()))
-reg('prod', (a) => Value.fromScalar(mat(a[0]).prod()))
-reg('cumsum', (a) => {
-  const m = mat(a[0]); let s = 0
-  return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(v => s += v)))
-})
-reg('cumprod', (a) => {
-  const m = mat(a[0]); let s = 1
-  return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(v => { s *= v; return s })))
-})
+  if (dimArg === null && isVecM(m)) {
+    const [val, idx] = pick([...m.data])
+    if (wantIdx) return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromScalar(val), Value.fromScalar(idx)] })
+    return Value.fromScalar(val)
+  }
+  const dim = dimArg ?? 1
+  const results = dimSlices(m, dim).map(pick)
+  const shape = (vals: number[]) => dim === 2 ? new Matrix(vals.length, 1, vals) : new Matrix(1, vals.length, vals)
+  const vals = shape(results.map(r => r[0]))
+  if (wantIdx) {
+    const idxs = shape(results.map(r => r[1]))
+    return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromMatrix(vals), Value.fromMatrix(idxs)] })
+  }
+  return Value.fromMatrix(vals)
+}
+reg('max', (a, interp) => extremum(a, interp, (x, y) => x > y))
+reg('min', (a, interp) => extremum(a, interp, (x, y) => x < y))
+reg('sum', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => v.reduce((s, x) => s + x, 0)))
+reg('prod', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => v.reduce((s, x) => s * x, 1)))
+
+// Cumulative ops run down columns for matrices (MATLAB), flat for vectors.
+function cumDim(m: Matrix, dimArg: number | null, step: (acc: number, x: number) => number, init: number): Value {
+  if (dimArg === null && isVecM(m)) {
+    let s = init
+    return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(v => (s = step(s, v)))))
+  }
+  const dim = dimArg ?? 1
+  const r = new Matrix(m.rows, m.cols)
+  if (dim === 2) {
+    for (let row = 0; row < m.rows; row++) { let s = init; for (let c = 0; c < m.cols; c++) { s = step(s, m.get(row, c)); r.set(row, c, s) } }
+  } else {
+    for (let c = 0; c < m.cols; c++) { let s = init; for (let row = 0; row < m.rows; row++) { s = step(s, m.get(row, c)); r.set(row, c, s) } }
+  }
+  return Value.fromMatrix(r)
+}
+reg('cumsum', (a) => cumDim(mat(a[0]), dimOf(a, 1), (s, x) => s + x, 0))
+reg('cumprod', (a) => cumDim(mat(a[0]), dimOf(a, 1), (s, x) => s * x, 1))
 
 // Matrix creation
 reg('zeros', (a) => {
@@ -178,30 +237,39 @@ reg('cross', (a) => {
   return Value.fromMatrix(new Matrix(1, 3, [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]))
 })
 
-// Statistics
-reg('mean', (a) => Value.fromScalar(mat(a[0]).mean()))
-reg('median', (a) => {
-  const d = [...mat(a[0]).data].sort((a, b) => a - b)
+// Statistics (vector → scalar; matrix → column-wise, MATLAB semantics)
+reg('mean', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => v.reduce((s, x) => s + x, 0) / v.length))
+reg('median', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => {
+  const d = [...v].sort((x, y) => x - y)
   const n = d.length
-  return Value.fromScalar(n % 2 ? d[(n - 1) / 2] : (d[n / 2 - 1] + d[n / 2]) / 2)
-})
-reg('std', (a) => {
-  const m = mat(a[0]); const mu = m.mean(); const n = m.numel()
-  return Value.fromScalar(Math.sqrt(m.data.reduce((s, v) => s + (v - mu) ** 2, 0) / (n - 1)))
-})
-reg('var', (a) => {
-  const m = mat(a[0]); const mu = m.mean(); const n = m.numel()
-  return Value.fromScalar(m.data.reduce((s, v) => s + (v - mu) ** 2, 0) / (n - 1))
-})
+  return n % 2 ? d[(n - 1) / 2] : (d[n / 2 - 1] + d[n / 2]) / 2
+}))
+reg('std', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => Math.sqrt(sampleVariance(v))))
+reg('var', (a) => reduceDim(mat(a[0]), dimOf(a, 1), v => sampleVariance(v)))
 reg('sort', (a, interp) => {
   const m = mat(a[0])
-  const desc = a.length > 1 && a[1].isString() && a[1].string() === 'descend'
-  const order = m.data.map((_, i) => i).sort((i, j) => desc ? m.data[j] - m.data[i] : m.data[i] - m.data[j])
-  const sorted = new Matrix(m.rows, m.cols, order.map(i => m.data[i]))
-  if (interp.getNargout() >= 2) {
-    const idx = new Matrix(m.rows, m.cols, order.map(i => i + 1)) // 1-based original positions
-    return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromMatrix(sorted), Value.fromMatrix(idx)] })
+  const desc = a.length > 1 && a[1] !== undefined && a[1].isString() && a[1].string() === 'descend'
+  const cmp = (x: number, y: number) => desc ? y - x : x - y
+  const wantIdx = interp.getNargout() >= 2
+  const sortSlice = (v: number[]): [number[], number[]] => {
+    const order = v.map((_, i) => i).sort((i, j) => cmp(v[i], v[j]))
+    return [order.map(i => v[i]), order.map(i => i + 1)] // values, 1-based positions
   }
+  if (isVecM(m)) {
+    const [vals, idxs] = sortSlice([...m.data])
+    const sorted = new Matrix(m.rows, m.cols, vals)
+    if (wantIdx) return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromMatrix(sorted), Value.fromMatrix(new Matrix(m.rows, m.cols, idxs))] })
+    return Value.fromMatrix(sorted)
+  }
+  // Matrix: sort each column independently (MATLAB)
+  const sorted = new Matrix(m.rows, m.cols), indices = new Matrix(m.rows, m.cols)
+  for (let c = 0; c < m.cols; c++) {
+    const col: number[] = []
+    for (let r = 0; r < m.rows; r++) col.push(m.get(r, c))
+    const [vals, idxs] = sortSlice(col)
+    for (let r = 0; r < m.rows; r++) { sorted.set(r, c, vals[r]); indices.set(r, c, idxs[r]) }
+  }
+  if (wantIdx) return Value.fromCell({ rows: 1, cols: 2, data: [Value.fromMatrix(sorted), Value.fromMatrix(indices)] })
   return Value.fromMatrix(sorted)
 })
 
@@ -316,8 +384,16 @@ reg('nargin', () => Value.fromScalar(0))
 reg('nargout', () => Value.fromScalar(0))
 
 // Logical
-reg('any', (a) => Value.fromLogical(mat(a[0]).data.some(v => v !== 0)))
-reg('all', (a) => Value.fromLogical(mat(a[0]).data.every(v => v !== 0)))
+reg('any', (a) => {
+  const m = mat(a[0])
+  if (isVecM(m)) return Value.fromLogical(m.data.some(v => v !== 0))
+  return reduceDim(m, dimOf(a, 1), v => v.some(x => x !== 0) ? 1 : 0)
+})
+reg('all', (a) => {
+  const m = mat(a[0])
+  if (isVecM(m)) return Value.fromLogical(m.data.every(v => v !== 0))
+  return reduceDim(m, dimOf(a, 1), v => v.every(x => x !== 0) ? 1 : 0)
+})
 reg('find', (a, interp) => {
   const m = mat(a[0])
   if (interp.getNargout() >= 2) {

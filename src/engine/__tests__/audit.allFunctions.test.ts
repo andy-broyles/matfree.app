@@ -120,6 +120,37 @@ describe('Aggregates & statistics', () => {
     expect(vec("sort([3 1 2], 'descend')")).toEqual([3, 2, 1])
     expect(vec('[s, i] = sort([30 10 20]); i')).toEqual([2, 3, 1])
   })
+  it('matrix reductions are column-wise (MATLAB semantics)', () => {
+    // A = [1 2; 3 4]: columns are [1;3] and [2;4]
+    expect(vec('sum([1 2; 3 4])')).toEqual([4, 6])
+    expect(vec('sum([1 2; 3 4], 2)')).toEqual([3, 7])
+    expect(vec('prod([1 2; 3 4])')).toEqual([3, 8])
+    expect(vec('mean([1 2; 3 4])')).toEqual([2, 3])
+    expect(vec('mean([1 2; 3 4], 2)')).toEqual([1.5, 3.5])
+    expect(vec('max([1 5; 3 2])')).toEqual([3, 5])
+    expect(vec('min([1 5; 3 2])')).toEqual([1, 2])
+    expect(vec('median([1 2; 3 4; 5 6])')).toEqual([3, 4])
+    expectVec(vec('std([2 10; 4 20; 6 30])'), [2, 10])
+    expect(vec('any([0 1; 0 0])')).toEqual([0, 1])
+    expect(vec('all([1 1; 1 0])')).toEqual([1, 0])
+    // sum(sum(A)) idiom gives the grand total
+    expect(sc('sum(sum([1 2; 3 4]))')).toBe(10)
+  })
+  it('max/min: elementwise two-arg, [],dim form, column indices', () => {
+    expect(vec('max([1 5 2], [3 1 4])')).toEqual([3, 5, 4])
+    expect(sc('max(3, 7)')).toBe(7)
+    expect(vec('max([1 2; 3 4], [], 2)')).toEqual([2, 4])
+    expect(vec('[m, i] = max([1 5; 3 2]); i')).toEqual([2, 1]) // row of argmax per column
+  })
+  it('cumsum/cumprod run down columns for matrices', () => {
+    expect(vec('cumsum([1 2; 3 4])')).toEqual([1, 2, 4, 6])  // row-major of [1 2; 4 6]
+    expect(vec('cumsum([1 2; 3 4], 2)')).toEqual([1, 3, 3, 7])
+    expect(vec('cumprod([1 2; 3 4])')).toEqual([1, 2, 3, 8])
+  })
+  it('sort on matrices is per-column', () => {
+    expect(vec('sort([3 1; 1 2; 2 3])')).toEqual([1, 1, 2, 2, 3, 3])
+    expect(vec('[s, i] = sort([3; 1; 2]); i')).toEqual([2, 3, 1])
+  })
   it('normal distribution', () => {
     expectClose(sc('normpdf(0, 0, 1)'), 1 / Math.sqrt(2 * Math.PI), 1e-6)
     expectClose(sc('normcdf(0, 0, 1)'), 0.5, 1e-6)
