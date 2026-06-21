@@ -28,10 +28,11 @@ export class Matrix {
    *  abs(), ifft(), fftshift(). Other operations act on the real part only. */
   imag?: number[]
 
-  constructor(rows: number, cols: number, data?: number[]) {
+  constructor(rows: number, cols: number, data?: number[], imag?: number[]) {
     assertAllocSize(rows * cols, `${rows}x${cols} matrix`)
     this.rows = rows; this.cols = cols
     this.data = data ?? new Array(rows * cols).fill(0)
+    if (imag && imag.length === rows * cols) this.imag = [...imag]
   }
 
   static scalar(v: number): Matrix { return new Matrix(1, 1, [v]) }
@@ -72,26 +73,60 @@ export class Matrix {
     return this.data[rr * this.cols + cc]
   }
 
-  clone(): Matrix { return new Matrix(this.rows, this.cols, [...this.data]) }
+  getImWithBroadcast(r: number, c: number): number {
+    if (!this.imag) return 0
+    const rr = this.rows === 1 ? 0 : r
+    const cc = this.cols === 1 ? 0 : c
+    return this.imag[rr * this.cols + cc]
+  }
+
+  clone(): Matrix {
+    const m = new Matrix(this.rows, this.cols, [...this.data])
+    if (this.imag) m.imag = [...this.imag]
+    return m
+  }
 
   transpose(): Matrix {
     const m = new Matrix(this.cols, this.rows)
     for (let r = 0; r < this.rows; r++)
       for (let c = 0; c < this.cols; c++) m.set(c, r, this.get(r, c))
+    if (this.imag) {
+      m.imag = new Array(this.cols * this.rows)
+      for (let r = 0; r < this.rows; r++)
+        for (let c = 0; c < this.cols; c++) m.imag![c * this.rows + r] = this.imag[r * this.cols + c]
+    }
     return m
   }
 
   add(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) m.set(r, c, this.getWithBroadcast(r, c) + o.getWithBroadcast(r, c))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(rr * cc).fill(0)
+    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+      m.set(r, c, this.getWithBroadcast(r, c) + o.getWithBroadcast(r, c))
+      if (hasIm) {
+        const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
+        const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
+        m.imag![r * cc + c] = ai + bi
+      }
+    }
     return m
   }
 
   sub(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) m.set(r, c, this.getWithBroadcast(r, c) - o.getWithBroadcast(r, c))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(rr * cc).fill(0)
+    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+      m.set(r, c, this.getWithBroadcast(r, c) - o.getWithBroadcast(r, c))
+      if (hasIm) {
+        const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
+        const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
+        m.imag![r * cc + c] = ai - bi
+      }
+    }
     return m
   }
 
@@ -106,30 +141,85 @@ export class Matrix {
   elementMul(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) m.set(r, c, this.getWithBroadcast(r, c) * o.getWithBroadcast(r, c))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(rr * cc).fill(0)
+    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+      const ar = this.getWithBroadcast(r, c), br = o.getWithBroadcast(r, c)
+      const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
+      const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
+      m.set(r, c, ar * br - ai * bi)
+      if (hasIm) m.imag![r * cc + c] = ar * bi + ai * br
+    }
     return m
   }
 
   elementDiv(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) m.set(r, c, this.getWithBroadcast(r, c) / o.getWithBroadcast(r, c))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(rr * cc).fill(0)
+    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+      const ar = this.getWithBroadcast(r, c), br = o.getWithBroadcast(r, c)
+      const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
+      const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
+      const den = br * br + bi * bi || 1
+      m.set(r, c, (ar * br + ai * bi) / den)
+      if (hasIm) m.imag![r * cc + c] = (ai * br - ar * bi) / den
+    }
     return m
   }
 
   elementPow(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) m.set(r, c, Math.pow(this.getWithBroadcast(r, c), o.getWithBroadcast(r, c)))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(rr * cc).fill(0)
+    for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+      const ar = this.getWithBroadcast(r, c), br = o.getWithBroadcast(r, c)
+      const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
+      const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
+      if (ai === 0 && bi === 0) {
+        m.set(r, c, Math.pow(ar, br))
+      } else if (bi === 0) {
+        // base complex, real exponent
+        const mag = Math.hypot(ar, ai)
+        const ang = Math.atan2(ai, ar)
+        const magp = Math.pow(mag, br)
+        const angp = ang * br
+        m.set(r, c, magp * Math.cos(angp))
+        if (hasIm) m.imag![r * cc + c] = magp * Math.sin(angp)
+      } else {
+        // full complex exponent is rare here; use |base|^Re(exp) * angle handling (approx)
+        const mag = Math.hypot(ar, ai)
+        const ang = Math.atan2(ai, ar)
+        const magp = Math.pow(mag, br)
+        const angp = ang * br
+        m.set(r, c, magp * Math.cos(angp))
+        if (hasIm) m.imag![r * cc + c] = magp * Math.sin(angp)
+      }
+    }
     return m
   }
 
-  neg(): Matrix { return new Matrix(this.rows, this.cols, this.data.map(v => -v)) }
+  neg(): Matrix {
+    const m = new Matrix(this.rows, this.cols, this.data.map(v => -v))
+    if (this.imag) m.imag = this.imag.map(v => -v)
+    return m
+  }
 
   scalarOp(s: number, op: string): Matrix {
-    return new Matrix(this.rows, this.cols, this.data.map(v => {
+    const m = new Matrix(this.rows, this.cols, this.data.map(v => {
       switch (op) { case '+': return v + s; case '-': return v - s; case '*': return v * s; case '/': return v / s; case '^': return Math.pow(v, s); default: return v }
     }))
+    if (this.imag) {
+      // For real scalar s: imag part unchanged except for * and / (and ^ is complex in general)
+      if (op === '*') m.imag = this.imag.map(v => v * s)
+      else if (op === '/') m.imag = this.imag.map(v => v / s)
+      else if (op === '+' || op === '-') m.imag = [...this.imag]
+      // ^ on complex base with real exp is non-trivial; leave imag as-is for minimal
+      else m.imag = [...this.imag]
+    }
+    return m
   }
 
   sum(): number { return this.data.reduce((a, b) => a + b, 0) }
@@ -137,7 +227,17 @@ export class Matrix {
   mean(): number { return this.sum() / this.numel() }
   minVal(): number { return Math.min(...this.data) }
   maxVal(): number { return Math.max(...this.data) }
-  norm(): number { return Math.sqrt(this.data.reduce((s, v) => s + v * v, 0)) }
+  norm(): number {
+    if (this.imag) {
+      let s = 0
+      for (let i = 0; i < this.data.length; i++) {
+        const re = this.data[i], im = this.imag[i]
+        s += re * re + im * im
+      }
+      return Math.sqrt(s)
+    }
+    return Math.sqrt(this.data.reduce((s, v) => s + v * v, 0))
+  }
 
   det(): number {
     if (this.rows !== this.cols) throw new RuntimeError('det requires square matrix')
@@ -183,30 +283,54 @@ export class Matrix {
   horzcat(o: Matrix): Matrix {
     if (this.rows !== o.rows) throw new RuntimeError('Horizontal cat: row mismatch')
     const m = new Matrix(this.rows, this.cols + o.cols)
-    for (let r = 0; r < this.rows; r++) { for (let c = 0; c < this.cols; c++) m.set(r, c, this.get(r, c)); for (let c = 0; c < o.cols; c++) m.set(r, this.cols + c, o.get(r, c)) }
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array((this.cols + o.cols) * this.rows).fill(0)
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        m.set(r, c, this.get(r, c))
+        if (hasIm) m.imag![r * (this.cols + o.cols) + c] = this.imag ? this.imag[r * this.cols + c] : 0
+      }
+      for (let c = 0; c < o.cols; c++) {
+        m.set(r, this.cols + c, o.get(r, c))
+        if (hasIm) m.imag![r * (this.cols + o.cols) + this.cols + c] = o.imag ? o.imag[r * o.cols + c] : 0
+      }
+    }
     return m
   }
 
   vertcat(o: Matrix): Matrix {
     if (this.cols !== o.cols) throw new RuntimeError('Vertical cat: col mismatch')
     const m = new Matrix(this.rows + o.rows, this.cols)
-    for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) m.set(r, c, this.get(r, c))
-    for (let r = 0; r < o.rows; r++) for (let c = 0; c < this.cols; c++) m.set(this.rows + r, c, o.get(r, c))
+    const hasIm = !!(this.imag || o.imag)
+    if (hasIm) m.imag = new Array(this.cols * (this.rows + o.rows)).fill(0)
+    for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) {
+      m.set(r, c, this.get(r, c))
+      if (hasIm) m.imag![r * this.cols + c] = this.imag ? this.imag[r * this.cols + c] : 0
+    }
+    for (let r = 0; r < o.rows; r++) for (let c = 0; c < this.cols; c++) {
+      m.set(this.rows + r, c, o.get(r, c))
+      if (hasIm) m.imag![(this.rows + r) * this.cols + c] = o.imag ? o.imag[r * this.cols + c] : 0
+    }
     return m
   }
 
   reshape(r: number, c: number): Matrix {
     if (r * c !== this.numel()) throw new RuntimeError('reshape: numel mismatch')
-    return new Matrix(r, c, [...this.data])
+    const m = new Matrix(r, c, [...this.data])
+    if (this.imag) m.imag = [...this.imag]
+    return m
   }
 
   toString(): string {
     if (this.numel() === 0) return '[]'
-    if (this.isScalar()) return formatNum(this.data[0])
+    if (this.isScalar()) return formatComplex(this.data[0], this.imag ? this.imag[0] : 0)
     const lines: string[] = []
     for (let r = 0; r < this.rows; r++) {
       const vals: string[] = []
-      for (let c = 0; c < this.cols; c++) vals.push(formatNum(this.get(r, c)).padStart(10))
+      for (let c = 0; c < this.cols; c++) {
+        const re = this.get(r, c), im = this.imag ? this.getImWithBroadcast(r, c) : 0
+        vals.push(formatComplex(re, im).padStart(12))
+      }
       lines.push('  ' + vals.join('  '))
     }
     return lines.join('\n')
@@ -226,6 +350,19 @@ function formatNum(v: number): string {
   if (Number.isInteger(v) && Math.abs(v) < 1e15) return v.toString()
   const s = v.toPrecision(4)
   return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s
+}
+
+function formatComplex(re: number, im: number): string {
+  if (!im || Math.abs(im) < 1e-15) return formatNum(re)
+  if (!re || Math.abs(re) < 1e-15) {
+    if (Math.abs(im - 1) < 1e-12) return 'i'
+    if (Math.abs(im + 1) < 1e-12) return '-i'
+    return formatNum(im) + 'i'
+  }
+  const sign = im >= 0 ? ' + ' : ' - '
+  const imAbs = Math.abs(im)
+  if (Math.abs(imAbs - 1) < 1e-12) return formatNum(re) + sign.trim() + 'i'
+  return formatNum(re) + sign + formatNum(imAbs) + 'i'
 }
 
 // Value types
@@ -311,7 +448,10 @@ export class Value {
     const label = name ?? 'ans'
     if (this.isMatrix()) {
       const m = this.matrix()
-      if (m.isScalar()) return `${label} = ${formatNum(m.scalarValue())}\n`
+      if (m.isScalar()) {
+        const im = m.imag ? m.imag[0] : 0
+        return `${label} = ${formatComplex(m.scalarValue(), im)}\n`
+      }
       if (m.numel() === 0) return `${label} = []\n`
       return `${label} =\n${m.toString()}\n`
     }

@@ -1,6 +1,6 @@
 // MatFree Engine - Plot Data Types
 
-export type PlotType = 'line' | 'scatter' | 'bar' | 'stem' | 'stairs' | 'area' | 'hist'
+export type PlotType = 'line' | 'scatter' | 'bar' | 'stem' | 'stairs' | 'area' | 'hist' | 'errorbar' | 'quiver' | 'boxplot'
 
 export interface PlotSeries {
   type: PlotType
@@ -13,6 +13,10 @@ export interface PlotSeries {
   lineStyle?: 'solid' | 'dashed' | 'dotted' | 'none'
   marker?: 'none' | 'circle' | 'square' | 'diamond' | 'triangle' | 'x' | 'plus'
   fillAlpha?: number
+  e?: number[]        // errorbar
+  u?: number[]        // quiver
+  v?: number[]        // quiver
+  groups?: number[][] // boxplot
 }
 
 export interface PlotFigure {

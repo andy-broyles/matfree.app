@@ -5,6 +5,7 @@ import { Parser } from './parser'
 import { Expr, Stmt, Program } from './ast'
 import { TokenType } from './token'
 import { Value, Matrix, RuntimeError, FuncHandle, CellArray, assertAllocSize } from './value'
+import type { Debugger } from './debugger'
 import { Environment } from './environment'
 import { getBuiltin, hasBuiltin } from './builtins'
 import type { PlotFigure, PlotCallback } from './plot'
@@ -36,6 +37,9 @@ export class Interpreter {
   // RHS call; the call consumes it and exposes it to builtins via getNargout().
   private nargoutHint = 1
   private activeNargout = 1
+  // Optional debugger attachment (non-breaking; null when not debugging)
+  private debugger: Debugger | null = null
+  private debugStep = 0
 
   constructor() {
     this.env = this.globalEnv
@@ -48,8 +52,10 @@ export class Interpreter {
     this.globalEnv.set('true', Value.fromLogical(true))
     this.globalEnv.set('false', Value.fromLogical(false))
     this.globalEnv.set('eps', Value.fromScalar(2.220446049250313e-16))
-    this.globalEnv.set('i', Value.fromScalar(NaN)) // placeholder for complex
-    this.globalEnv.set('j', Value.fromScalar(NaN))
+    // Complex units: 0 + 1i
+    const oneImag = new Matrix(1, 1, [0], [1])
+    this.globalEnv.set('i', Value.fromMatrix(oneImag))
+    this.globalEnv.set('j', Value.fromMatrix(new Matrix(1, 1, [0], [1])))
   }
 
   setOutput(cb: OutputCallback) { this.output = cb }
@@ -58,6 +64,8 @@ export class Interpreter {
   /** Number of outputs requested from the builtin currently executing (1 unless destructured). */
   getNargout(): number { return this.activeNargout }
   setPlotCallback(cb: PlotCallback) { this.plotCallback = cb }
+  /** Attach (or clear) a Debugger for step/breakpoint support. Non-breaking when null. */
+  setDebugger(d: Debugger | null) { this.debugger = d }
   print(text: string) { this.output(text) }
   currentEnv(): Environment { return this.env }
   getGlobalEnv(): Environment { return this.globalEnv }
@@ -93,6 +101,7 @@ export class Interpreter {
   execute(code: string): Value {
     this.deadline = this.maxExecutionMs > 0 ? Date.now() + this.maxExecutionMs : 0
     this.callDepth = 0
+    this.debugStep = 0
     const lexer = new Lexer(code)
     const tokens = lexer.tokenize()
     const parser = new Parser(tokens)
@@ -102,7 +111,14 @@ export class Interpreter {
     let result = Value.empty()
     for (const stmt of program.statements) {
       if (stmt.kind === 'functionDef') continue // already registered
+      if (this.debugger && this.debugger.shouldPause(this.debugStep + 1)) {
+        try { this.debugger.createSnapshot(this.env) } catch {}
+      }
+      this.debugStep++
       result = this.execStmt(stmt)
+    }
+    if (this.debugger) {
+      try { this.debugger.createSnapshot(this.env) } catch {}
     }
     return result
   }
@@ -320,7 +336,12 @@ export class Interpreter {
 
   evalExpr(expr: Expr): Value {
     switch (expr.kind) {
-      case 'number': return expr.isComplex ? Value.fromScalar(NaN) : Value.fromScalar(expr.value)
+      case 'number':
+        if (expr.isComplex) {
+          const im = (expr as any).imagValue ?? 0
+          return Value.fromMatrix(new Matrix(1, 1, [0], [im]))
+        }
+        return Value.fromScalar(expr.value)
       case 'string': return Value.fromString(expr.value)
       case 'bool': return Value.fromLogical(expr.value)
       case 'identifier': return this.evalIdentifier(expr.name)
@@ -381,15 +402,37 @@ export class Interpreter {
     switch (expr.op) {
       case TokenType.PLUS: return Value.fromMatrix(lm.add(rm))
       case TokenType.MINUS: return Value.fromMatrix(lm.sub(rm))
-      case TokenType.STAR: return Value.fromMatrix(lm.mul(rm))
+      case TokenType.STAR:
+        // Complex-aware scalar multiply: if either side is 1x1 (scalar) and any imag present, use elementwise complex mul
+        if (lm.isScalar() || rm.isScalar()) {
+          const hasCplx = !!(lm.imag || rm.imag)
+          if (hasCplx) return Value.fromMatrix(lm.elementMul(rm))
+          if (lm.isScalar()) return Value.fromMatrix(rm.scalarOp(lm.scalarValue(), '*'))
+          if (rm.isScalar()) return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '*'))
+        }
+        return Value.fromMatrix(lm.mul(rm))
       case TokenType.SLASH:
-        if (rm.isScalar()) return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '/'))
+        if (rm.isScalar()) {
+          if (lm.imag || rm.imag) return Value.fromMatrix(lm.elementDiv(rm))
+          return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '/'))
+        }
         throw new RuntimeError('Matrix right division not yet implemented')
       case TokenType.CARET:
         if (rm.isScalar()) {
           const n = rm.scalarValue()
           if (n === -1) return Value.fromMatrix(lm.inv())
-          if (lm.isScalar()) return Value.fromScalar(Math.pow(lm.scalarValue(), n))
+          if (lm.isScalar()) {
+            const re = lm.scalarValue(), im = lm.imag ? lm.imag[0] : 0
+            if (!im) return Value.fromScalar(Math.pow(re, n))
+            // complex ^ real via polar
+            const mag = Math.hypot(re, im)
+            const ang = Math.atan2(im, re)
+            const magp = Math.pow(mag, n)
+            const angp = ang * n
+            const r2 = magp * Math.cos(angp)
+            const i2 = magp * Math.sin(angp)
+            return Value.fromMatrix(new Matrix(1, 1, [r2], [i2]))
+          }
           throw new RuntimeError('Matrix power only supports ^-1 and scalar base')
         }
         throw new RuntimeError('Matrix power requires scalar exponent')
@@ -514,7 +557,10 @@ export class Interpreter {
       switch (origExpr.op) {
         case TokenType.PLUS: return Value.fromMatrix(lm.add(rm))
         case TokenType.MINUS: return Value.fromMatrix(lm.sub(rm))
-        case TokenType.STAR: return Value.fromMatrix(lm.mul(rm))
+        case TokenType.STAR:
+          if (lm.isScalar()) return Value.fromMatrix(rm.scalarOp(lm.scalarValue(), '*'))
+          if (rm.isScalar()) return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '*'))
+          return Value.fromMatrix(lm.mul(rm))
         case TokenType.SLASH: return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '/'))
         default: break
       }

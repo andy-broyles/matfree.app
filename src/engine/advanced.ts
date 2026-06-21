@@ -122,23 +122,27 @@ reg('svd_full', (a) => {
     let off = 0; for (let i = 1; i < n; i++) for (let j = 0; j < i; j++) off += Math.abs(T.get(i, j))
     if (off < 1e-12) break
   }
-  const sv: number[] = []
-  for (let i = 0; i < Math.min(m, n); i++) sv.push(Math.sqrt(Math.max(0, T.get(i, i))))
-  // Sort by descending singular value
-  const idx = sv.map((v, i) => i).sort((a, b) => sv[b] - sv[a])
+  const raw: number[] = []
+  for (let i = 0; i < n; i++) raw.push(Math.sqrt(Math.max(0, T.get(i, i))))
+  // Sort indices by descending singular value (all n, incl trailing zeros when m < n)
+  const idx = raw.map((v, i) => i).sort((a, b) => raw[b] - raw[a])
+  const k = Math.min(m, n)
   const S = Matrix.zeros(m, n)
   const Vsorted = Matrix.zeros(n, n)
   for (let j = 0; j < n; j++) {
-    S.set(j, j, sv[idx[j]])
-    for (let i = 0; i < n; i++) Vsorted.set(i, j, V.get(i, idx[j]))
+    const s = (j < k ? raw[idx[j]] : 0)
+    if (j < m) S.set(j, j, s)
+    const vcol = j < k ? idx[j] : j // fallback identity for trailing; recon ignores zero-S cols
+    for (let i = 0; i < n; i++) Vsorted.set(i, j, V.get(i, vcol))
   }
   // U = A * V * S^-1
   const U = Matrix.zeros(m, m)
-  for (let j = 0; j < Math.min(m, n); j++) {
-    if (sv[idx[j]] > 1e-14) {
+  for (let j = 0; j < k; j++) {
+    const sj = raw[idx[j]]
+    if (sj > 1e-14) {
       const col = new Matrix(n, 1)
       for (let i = 0; i < n; i++) col.set(i, 0, Vsorted.get(i, j))
-      const u = A.mul(col).scalarOp(1 / sv[idx[j]], '*')
+      const u = A.mul(col).scalarOp(1 / sj, '*')
       for (let i = 0; i < m; i++) U.set(i, j, u.get(i, 0))
     }
   }

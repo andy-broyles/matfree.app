@@ -80,6 +80,33 @@ reg('abs', (a) => {
   }
   return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(Math.abs)))
 })
+
+// Complex number utilities
+reg('real', (a) => {
+  const m = mat(a[0])
+  // real part is always the .data; if no imag, it's the whole value
+  return Value.fromMatrix(new Matrix(m.rows, m.cols, [...m.data]))
+})
+reg('imag', (a) => {
+  const m = mat(a[0])
+  if (m.imag) return Value.fromMatrix(new Matrix(m.rows, m.cols, [...m.imag]))
+  return Value.fromMatrix(new Matrix(m.rows, m.cols, new Array(m.numel()).fill(0)))
+})
+reg('conj', (a) => {
+  const m = mat(a[0])
+  const r = new Matrix(m.rows, m.cols, [...m.data])
+  if (m.imag) r.imag = m.imag.map(v => -v)
+  return Value.fromMatrix(r)
+})
+reg('angle', (a) => {
+  const m = mat(a[0])
+  const out = new Array(m.numel())
+  for (let i = 0; i < m.numel(); i++) {
+    const re = m.data[i], im = m.imag ? m.imag[i] : 0
+    out[i] = Math.atan2(im, re)
+  }
+  return Value.fromMatrix(new Matrix(m.rows, m.cols, out))
+})
 reg('ceil', (a) => applyElem(a[0], Math.ceil))
 reg('floor', (a) => applyElem(a[0], Math.floor))
 reg('round', (a) => applyElem(a[0], Math.round))
@@ -161,14 +188,92 @@ reg('ones', (a) => {
 })
 reg('eye', (a) => { const n = a.length > 0 ? num(a[0]) : 1; return Value.fromMatrix(Matrix.eye(n)) })
 reg('rand', (a) => {
-  if (a.length === 0) return Value.fromScalar(Math.random())
-  if (a.length === 1) { const n = num(a[0]); return Value.fromMatrix(Matrix.rand(n, n)) }
-  return Value.fromMatrix(Matrix.rand(num(a[0]), num(a[1])))
+  if (a.length === 0) return Value.fromScalar(randu())
+  if (a.length === 1) { const n = num(a[0]); return Value.fromMatrix(randMat(n, n)) }
+  return Value.fromMatrix(randMat(num(a[0]), num(a[1])))
 })
 reg('randn', (a) => {
-  if (a.length === 0) { const u1 = Math.random(), u2 = Math.random(); return Value.fromScalar(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)) }
-  if (a.length === 1) { const n = num(a[0]); return Value.fromMatrix(Matrix.randn(n, n)) }
-  return Value.fromMatrix(Matrix.randn(num(a[0]), num(a[1])))
+  if (a.length === 0) { const u1 = randu(), u2 = randu(); return Value.fromScalar(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)) }
+  if (a.length === 1) { const n = num(a[0]); return Value.fromMatrix(randnMat(n, n)) }
+  return Value.fromMatrix(randnMat(num(a[0]), num(a[1])))
+})
+
+// ─── Seeded RNG (simple mulberry32) ───────────────────────────────────────────
+let _rngState = (Math.random() * 0xffffffff) >>> 0
+function randu(): number {
+  let t = _rngState += 0x6D2B79F5
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+function randnMat(r: number, c: number): Matrix {
+  const m = new Matrix(r, c)
+  for (let i = 0; i < r * c; i++) {
+    const u1 = randu(), u2 = randu()
+    m.data[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
+  }
+  return m
+}
+function randMat(r: number, c: number): Matrix {
+  const m = new Matrix(r, c)
+  for (let i = 0; i < r * c; i++) m.data[i] = randu()
+  return m
+}
+reg('rng', (a, interp) => {
+  if (a.length === 0) {
+    // return current seed as scalar (best effort)
+    return Value.fromScalar(_rngState >>> 0)
+  }
+  if (!a[0]) { _rngState = 1; return Value.empty() }
+  if (a[0].isString()) {
+    const s = a[0].string().toLowerCase()
+    if (s === 'shuffle' || s === 'default') {
+      _rngState = (Date.now() & 0xffffffff) >>> 0
+    }
+    return Value.empty()
+  }
+  // numeric seed
+  _rngState = (Math.floor(num(a[0])) >>> 0) || 1
+  return Value.empty()
+})
+reg('randperm', (a) => {
+  if (!a[0]) throw new RuntimeError('randperm: n required')
+  const n = Math.floor(num(a[0]))
+  const k = a.length > 1 ? Math.floor(num(a[1])) : n
+  if (n <= 0 || k <= 0 || k > n) throw new RuntimeError('randperm: invalid n or k')
+  // Fisher-Yates partial shuffle using our RNG
+  const arr = Array.from({ length: n }, (_, i) => i + 1)
+  for (let i = 0; i < k; i++) {
+    const j = i + Math.floor(randu() * (n - i))
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp
+  }
+  return Value.fromMatrix(new Matrix(1, k, arr.slice(0, k)))
+})
+reg('randi', (a) => {
+  // randi(imax) or randi([imin imax], sz...)
+  if (!a[0]) throw new RuntimeError('randi: imax or [imin imax] required')
+  let imin = 1, imax = 1
+  let rows = 1, cols = 1
+  if (a.length === 1) {
+    // randi(imax) -> scalar
+    imax = Math.floor(num(a[0]))
+  } else {
+    const r = mat(a[0])
+    if (r.numel() >= 2) { imin = Math.floor(r.data[0]); imax = Math.floor(r.data[1]) }
+    else { imax = Math.floor(r.data[0]) }
+    if (a.length === 2) {
+      const sz = mat(a[1])
+      if (sz.numel() === 1) { rows = Math.floor(sz.data[0]); cols = rows }
+      else if (sz.numel() >= 2) { rows = Math.floor(sz.data[0]); cols = Math.floor(sz.data[1]) }
+    } else if (a.length >= 3) {
+      rows = Math.floor(num(a[1])); cols = Math.floor(num(a[2]))
+    }
+  }
+  if (imax < imin) { const t = imin; imin = imax; imax = t }
+  const out: number[] = []
+  const total = rows * cols
+  for (let i = 0; i < total; i++) out.push(Math.floor(randu() * (imax - imin + 1)) + imin)
+  return Value.fromMatrix(new Matrix(rows, cols, out))
 })
 reg('linspace', (a) => Value.fromMatrix(Matrix.linspace(num(a[0]), num(a[1]), a.length > 2 ? num(a[2]) : 100)))
 reg('colon', (a) => {
@@ -217,18 +322,28 @@ reg('det', (a) => Value.fromScalar(mat(a[0]).det()))
 reg('inv', (a) => Value.fromMatrix(mat(a[0]).inv()))
 reg('trace', (a) => Value.fromScalar(mat(a[0]).trace()))
 reg('norm', (a) => Value.fromScalar(mat(a[0]).norm()))
-reg('rank', (a) => {
-  const m = mat(a[0]); const tol = 1e-10; let r = 0
-  // Rough SVD-less rank via row echelon
-  const a2 = m.clone(); const n = Math.min(m.rows, m.cols)
-  for (let i = 0; i < n; i++) {
-    let max = i
-    for (let j = i + 1; j < m.rows; j++) if (Math.abs(a2.get(j, i)) > Math.abs(a2.get(max, i))) max = j
-    if (max !== i) for (let k = 0; k < m.cols; k++) { const t = a2.get(i, k); a2.set(i, k, a2.get(max, k)); a2.set(max, k, t) }
-    if (Math.abs(a2.get(i, i)) < tol) continue
-    r++
-    for (let j = i + 1; j < m.rows; j++) { const f = a2.get(j, i) / a2.get(i, i); for (let k = i; k < m.cols; k++) a2.set(j, k, a2.get(j, k) - f * a2.get(i, k)) }
+reg('rank', (a, interp) => {
+  const m = mat(a[0])
+  const tolArg = a.length > 1 ? num(a[1]) : null
+  // Prefer SVD singular values for robust rank
+  let svs: number[] = []
+  try {
+    const sv = interp.callBuiltin('svd', [a[0]])
+    svs = [...sv.toMatrix().data]
+  } catch {
+    // crude fallback using column norms
+    for (let c = 0; c < m.cols; c++) {
+      let s = 0; for (let r = 0; r < m.rows; r++) s += m.get(r, c) * m.get(r, c)
+      svs.push(Math.sqrt(s))
+    }
+    svs.sort((x, y) => y - x)
   }
+  if (!svs.length) return Value.fromScalar(0)
+  const maxS = Math.max(...svs)
+  const eps = 2.220446049250313e-16
+  const tol = tolArg ?? (Math.max(m.rows, m.cols) * eps * Math.max(1, maxS))
+  let r = 0
+  for (const s of svs) if (s > tol) r++
   return Value.fromScalar(r)
 })
 reg('dot', (a) => { const m1 = mat(a[0]), m2 = mat(a[1]); return Value.fromScalar(m1.data.reduce((s, v, i) => s + v * m2.data[i], 0)) })
@@ -572,6 +687,51 @@ reg('hist', (a, interp) => {
   for (let i = 0; i < nbins; i++) centers[i] = lo + (i + 0.5) * binW
   for (const v of data) { let b = Math.floor((v - lo) / binW); if (b >= nbins) b = nbins - 1; if (b < 0) b = 0; counts[b]++ }
   fig.series.push({ type: 'hist', x: centers, y: counts })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+// errorbar(x, y, e) or errorbar(y, e)
+reg('errorbar', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  let x: number[], y: number[], e: number[]
+  if (a.length >= 3) { x = [...mat(a[0]).data]; y = [...mat(a[1]).data]; e = [...mat(a[2]).data] }
+  else { y = [...mat(a[0]).data]; x = y.map((_, i) => i + 1); e = [...mat(a[1]).data] }
+  fig.series.push({ type: 'errorbar', x, y, e })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+// quiver(x, y, u, v)
+reg('quiver', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  const x = [...mat(a[0]).data], y = [...mat(a[1]).data], u = [...mat(a[2]).data], v = [...mat(a[3]).data]
+  fig.series.push({ type: 'quiver', x, y, u, v })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+// boxplot(data) where data may be matrix (columns as groups)
+reg('boxplot', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  const m = mat(a[0])
+  // pack column-wise groups
+  const groups: number[][] = []
+  for (let c = 0; c < m.cols; c++) {
+    const g: number[] = []; for (let r = 0; r < m.rows; r++) g.push(m.get(r, c)); groups.push(g)
+  }
+  fig.series.push({ type: 'boxplot', x: [], y: [], groups })
+  interp.emitPlot()
+  return Value.empty()
+})
+
+// spy(A) sparsity plot (nonzero positions)
+reg('spy', (a, interp) => {
+  const fig = interp.getCurrentFigure(); if (!fig.hold) fig.series = []
+  const m = mat(a[0])
+  const xs: number[] = [], ys: number[] = []
+  for (let r = 0; r < m.rows; r++) for (let c = 0; c < m.cols; c++) if (Math.abs(m.get(r, c)) > 0) { xs.push(c + 1); ys.push(r + 1) }
+  fig.series.push({ type: 'scatter', x: xs, y: ys, markerSize: 3 })
   interp.emitPlot()
   return Value.empty()
 })

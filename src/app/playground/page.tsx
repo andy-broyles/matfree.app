@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import styles from './playground.module.css'
 import { Interpreter, LexerError, ParseError, RuntimeError, Value } from '@/engine'
+import { Debugger, type DebugSnapshot, type DebugAction } from '@/engine/debugger'
 import type { PlotFigure, HelpEntry } from '@/engine'
 import type { Environment } from '@/engine/environment'
 import PlotCanvas from '@/components/PlotCanvas'
@@ -119,6 +120,16 @@ function PlaygroundInner() {
   const [loadUrlVar, setLoadUrlVar] = useState('data')
   const [showMathEditor, setShowMathEditor] = useState(false)
   const [mathExpr, setMathExpr] = useState('')
+  // Debugger wiring (minimal)
+  const [debugEnabled, setDebugEnabled] = useState(false)
+  const [debugBps, setDebugBps] = useState<number[]>([])
+  const [debugBpInput, setDebugBpInput] = useState('1')
+  const [lastDebugSnap, setLastDebugSnap] = useState<DebugSnapshot | null>(null)
+  const debugRef = useRef<Debugger | null>(null)
+  // Web Worker for background execution (editor Run path)
+  const workerRef = useRef<Worker | null>(null)
+  const [isRunningWorker, setIsRunningWorker] = useState(false)
+  const pendingRunId = useRef<number>(0)
 
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
@@ -179,6 +190,17 @@ function PlaygroundInner() {
   const executeCode = useCallback((code: string) => {
     if (!interpRef.current || !code.trim()) return
     setItems(prev => [...prev, { type: 'input', text: code }])
+    // Wire debugger if enabled
+    if (debugEnabled) {
+      const d = new Debugger()
+      debugRef.current = d
+      d.start()
+      debugBps.forEach((ln) => d.addBreakpoint(ln))
+      interpRef.current.setDebugger(d)
+    } else {
+      interpRef.current.setDebugger(null)
+      debugRef.current = null
+    }
     try { interpRef.current.execute(code) }
     catch (e: any) {
       const msg = e instanceof LexerError ? `Lexer Error (line ${e.line}): ${e.message}`
@@ -187,8 +209,15 @@ function PlaygroundInner() {
         : `Error: ${e.message ?? e}`
       setItems(prev => [...prev, { type: 'error', text: msg + '\n' }])
     }
+    // Capture a debug snapshot for display if debugging
+    if (debugEnabled && debugRef.current && interpRef.current) {
+      try {
+        const snap = debugRef.current.createSnapshot(interpRef.current.currentEnv() as any)
+        setLastDebugSnap(snap)
+      } catch { setLastDebugSnap(null) }
+    }
     updateEnvSnapshot()
-  }, [updateEnvSnapshot])
+  }, [updateEnvSnapshot, debugEnabled, debugBps])
 
   const handleSubmit = useCallback(() => {
     if (acVisible) { setAcVisible(false); return }
@@ -240,7 +269,57 @@ function PlaygroundInner() {
     if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); setCmdPaletteOpen(true) }
   }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, updateAcWord])
 
-  const runEditor = useCallback(() => { if (editorCode.trim()) executeCode(editorCode) }, [editorCode, executeCode])
+  const runEditor = useCallback(() => {
+    if (!editorCode.trim()) return
+    // Use worker for the full editor "Run" path (Ctrl+Enter) when possible
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      try {
+        if (!workerRef.current) {
+          // Vite/Next supports new URL + import.meta.url for worker
+          workerRef.current = new Worker(new URL('../engine/worker', import.meta.url), { type: 'module' })
+          workerRef.current.onmessage = (ev: MessageEvent<any>) => {
+            const m = ev.data
+            if (!m || typeof m !== 'object') return
+            const id = m.id
+            if (id !== pendingRunId.current) return // stale
+            if (m.type === 'start') {
+              setIsRunningWorker(true)
+              setItems(prev => [...prev, { type: 'input', text: editorCode }])
+              return
+            }
+            if (m.type === 'output') { setItems(prev => [...prev, { type: 'output', text: m.text }]); return }
+            if (m.type === 'plot') { setItems(prev => [...prev, { type: 'plot', figure: m.figure }]); return }
+            if (m.type === 'plot3d') { setItems(prev => [...prev, { type: 'plot3d', plot3d: m.data }]); return }
+            if (m.type === 'audio') { setItems(prev => [...prev, { type: 'audio', audioSrc: m.src }]); return }
+            if (m.type === 'done') {
+              setIsRunningWorker(false)
+              if (m.text) setItems(prev => [...prev, { type: 'output', text: m.text }])
+              updateEnvSnapshot()
+              return
+            }
+            if (m.type === 'error') {
+              setIsRunningWorker(false)
+              setItems(prev => [...prev, { type: 'error', text: (m.line ? `Error (line ${m.line}): ` : 'Error: ') + m.message + '\n' }])
+              return
+            }
+            if (m.type === 'cancelled') {
+              setIsRunningWorker(false)
+              setItems(prev => [...prev, { type: 'info', text: '[cancelled]\n' }])
+              return
+            }
+          }
+        }
+        const id = ++pendingRunId.current
+        setIsRunningWorker(true)
+        workerRef.current.postMessage({ id, type: 'run', code: editorCode, timeLimitMs: 10000 })
+        return
+      } catch {
+        // fall through to sync
+      }
+    }
+    // Fallback sync
+    executeCode(editorCode)
+  }, [editorCode, executeCode, updateEnvSnapshot])
 
   const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runEditor(); return }
@@ -348,6 +427,9 @@ function PlaygroundInner() {
           <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)}>
             {showVars ? 'Hide Vars' : 'Vars'}
           </button>
+          <button className={styles.actionBtn} onClick={() => { const next = !debugEnabled; setDebugEnabled(next); if (!next) { setLastDebugSnap(null); if (interpRef.current) interpRef.current.setDebugger(null) } }} title="Enable minimal debugger (breakpoints + snapshot)">
+            {debugEnabled ? 'Debug On' : 'Debug'}
+          </button>
           <button className={styles.actionBtn} onClick={() => {
             setExportLang(exportLang ? null : 'python')
           }} title="Export to Python/Julia">
@@ -405,8 +487,24 @@ function PlaygroundInner() {
             <div className={styles.editor}>
               <div className={styles.editorBar}>
                 <span>script.m</span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button className={styles.runBtn} onClick={runEditor}>Run (Ctrl+Enter)</button>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button className={styles.runBtn} onClick={runEditor} disabled={isRunningWorker}>Run (Ctrl+Enter)</button>
+                  {isRunningWorker && (
+                    <>
+                      <span style={{ fontSize: 12, opacity: 0.8 }}>running…</span>
+                      <button className={styles.actionBtn} onClick={() => {
+                        if (workerRef.current) {
+                          const id = pendingRunId.current
+                          workerRef.current.postMessage({ id, type: 'cancel' })
+                          // hard terminate to guarantee responsiveness
+                          try { workerRef.current.terminate() } catch {}
+                          workerRef.current = null
+                          setIsRunningWorker(false)
+                          setItems(prev => [...prev, { type: 'info', text: '[terminated]\n' }])
+                        }
+                      }}>Cancel</button>
+                    </>
+                  )}
                 </div>
               </div>
               <div className={styles.editorWrap}>
@@ -471,6 +569,37 @@ function PlaygroundInner() {
           <aside className={styles.rightPanel}>
             <h3>Workspace</h3>
             <VariableExplorer env={envSnapshot} onInspect={(name) => executeCode(`disp(${name})`)} />
+          </aside>
+        )}
+
+        {debugEnabled && (
+          <aside className={styles.rightPanel} style={{ marginTop: showVars ? 8 : 0 }}>
+            <h3>Debugger</h3>
+            <div style={{ fontSize: 12, marginBottom: 6 }}>
+              Breakpoints: {debugBps.length ? debugBps.join(', ') : '(none)'}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <input value={debugBpInput} onChange={(e) => setDebugBpInput(e.target.value)} placeholder="line" style={{ width: 60 }} />
+              <button onClick={() => { const ln = parseInt(debugBpInput, 10); if (ln > 0) { setDebugBps(p => Array.from(new Set([...p, ln])).sort((a,b)=>a-b)) } }}>Add BP</button>
+              <button onClick={() => { const ln = parseInt(debugBpInput, 10); if (ln > 0) setDebugBps(p => p.filter(x => x !== ln)) }}>Remove</button>
+              <button onClick={() => setDebugBps([])}>Clear</button>
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <button onClick={() => { if (interpRef.current && debugRef.current) { debugRef.current.resume('stepOver'); /* re-run to advance */ runEditor() } }}>Step</button>
+              <button onClick={() => { if (debugRef.current) debugRef.current.resume('continue'); runEditor() }}>Continue</button>
+              <button onClick={() => { setDebugEnabled(false); if (interpRef.current) interpRef.current.setDebugger(null); setLastDebugSnap(null) }}>Stop</button>
+            </div>
+            {lastDebugSnap && (
+              <div style={{ fontSize: 11, borderTop: '1px solid #2a2a3a', paddingTop: 6, marginTop: 4 }}>
+                <div>Paused line ~{lastDebugSnap.line} • {lastDebugSnap.state}</div>
+                <div style={{ maxHeight: 120, overflow: 'auto', marginTop: 4 }}>
+                  {lastDebugSnap.variables.length === 0 ? <em>(no vars)</em> : lastDebugSnap.variables.map((v, i) => (
+                    <div key={i}>{v.name}: {v.value}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!lastDebugSnap && <div style={{ fontSize: 11, opacity: .7 }}>Set BPs, run (Ctrl+Enter), use Step/Continue.</div>}
           </aside>
         )}
       </div>
