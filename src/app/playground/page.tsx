@@ -276,7 +276,7 @@ function PlaygroundInner() {
       try {
         if (!workerRef.current) {
           // Vite/Next supports new URL + import.meta.url for worker
-          workerRef.current = new Worker(new URL('../engine/worker', import.meta.url), { type: 'module' })
+          workerRef.current = new Worker(new URL('../../engine/worker', import.meta.url), { type: 'module' })
           workerRef.current.onmessage = (ev: MessageEvent<any>) => {
             const m = ev.data
             if (!m || typeof m !== 'object') return
