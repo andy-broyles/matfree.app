@@ -32,6 +32,7 @@
 .tutorialSteps li { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 20px; padding: 18px 20px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; font-size: 14px; line-height: 1.6; }
 .tutorialSteps li:last-child { margin-bottom: 0; }
 .stepNum { flex-shrink: 0; width: 28px; height: 28px; background: var(--accent); color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+.stepBody { flex: 1; min-width: 0; }
 .tutorialSteps strong { color: var(--text); font-weight: 600; }
 .stepLink { background: none; border: none; color: var(--accent-light); font-size: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
 .stepLink:hover { color: var(--accent); }
