@@ -89,12 +89,12 @@ export default function Home() {
             <div className={styles.feature}>
               <div className={styles.featureIcon}>d/dx</div>
               <h3>Symbolic Math</h3>
-              <p>Differentiation, integration, equation solving, Taylor series, simplification, and expansion. A full CAS running in your browser.</p>
+              <p>Differentiation, integration, equation solving, Taylor series, simplification, and expansion &mdash; a practical CAS for common expressions.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>{'///'}~</div>
               <h3>Interactive Plots</h3>
-              <p>Zoom, pan, crosshair tracking. 14 plot types including 3D surfaces. Annotations. CSV data export. PNG export. Heatmaps with Viridis colormap. All interactive.</p>
+              <p>Zoom, pan, crosshair tracking. Line, scatter, bar, hist, surface, mesh, contour, heatmaps, and more. PNG and CSV export.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>&#x1D400;</div>
@@ -109,12 +109,12 @@ export default function Home() {
             <div className={styles.feature}>
               <div className={styles.featureIcon}>{'>'}_</div>
               <h3>Live Workspace</h3>
-              <p>Command palette, autocomplete, variable explorer, shareable links, session persistence, CSV drag-and-drop import. A real IDE.</p>
+              <p>Command palette, autocomplete, variable explorer, shareable links, session persistence, and CSV drag-and-drop import.</p>
             </div>
             <div className={styles.feature}>
               <div className={styles.featureIcon}>$0</div>
               <h3>Free Forever</h3>
-              <p>No subscriptions. No seat licenses. No vendor lock-in. All computation runs locally in your browser &mdash; your code and data are never uploaded to a server.</p>
+              <p>No subscriptions. No seat licenses. No vendor lock-in. Computation runs in your browser &mdash; your scripts are not sent to a MatFree server.</p>
             </div>
           </div>
         </section>

@@ -13,15 +13,19 @@ interface Props {
   style?: React.CSSProperties
 }
 
+export function getAutocompleteSuggestions(query: string, env: Environment | null): string[] {
+  if (!query) return []
+  const q = query.toLowerCase()
+  const builtins = allBuiltinNames().filter(n => n.toLowerCase().startsWith(q) && n !== q)
+  const vars = env ? env.variableNames().filter(n => n.toLowerCase().startsWith(q) && n !== q) : []
+  return [...new Set([...vars, ...builtins])].sort().slice(0, 12)
+}
+
 export default function Autocomplete({ query, visible, selectedIdx, env, onSelect, style }: Props) {
-  const suggestions = useMemo(() => {
-    if (!query || !visible) return []
-    const q = query.toLowerCase()
-    const builtins = allBuiltinNames().filter(n => n.toLowerCase().startsWith(q) && n !== q)
-    const vars = env ? env.variableNames().filter(n => n.toLowerCase().startsWith(q) && n !== q) : []
-    const all = [...new Set([...vars, ...builtins])].sort()
-    return all.slice(0, 12)
-  }, [query, visible, env])
+  const suggestions = useMemo(
+    () => (visible ? getAutocompleteSuggestions(query, env) : []),
+    [query, visible, env],
+  )
 
   if (!visible || suggestions.length === 0) return null
 

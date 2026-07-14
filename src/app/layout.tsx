@@ -6,17 +6,17 @@ import 'katex/dist/katex.min.css'
 export const metadata: Metadata = {
   metadataBase: new URL('https://matfree.app'),
   title: {
-    default: 'MatFree — Free Scientific Computing in Your Browser',
+    default: 'MatFree — Free MATLAB Alternative in Your Browser',
     template: '%s | MatFree',
   },
-  description: 'Free scientific computing environment with 200+ built-in functions, symbolic math, 3D plots, audio synthesis, and a notebook mode. Runs entirely in your browser — no installation, no license fees.',
+  description: 'Free MATLAB-style scientific computing in your browser. Matrices, ODE45, FFT, plots, notebooks — no install, no license. 200+ built-in functions.',
   keywords: [
+    'free matlab alternative', 'matlab online', 'matlab in browser', 'octave alternative',
     'scientific computing', 'matrix calculator', 'linear algebra', 'numerical analysis',
     'symbolic math', 'CAS', 'plotting', '3D plots', 'FFT', 'ODE solver',
     'free math software', 'browser math', 'online calculator', 'matrix operations',
     'signal processing', 'data visualization', 'notebook', 'REPL',
     'eigenvalues', 'SVD', 'curve fitting', 'interpolation', 'optimization',
-    'audio synthesis', 'LaTeX math', 'math environment', 'engineering calculator',
   ],
   authors: [{ name: 'MatFree' }],
   creator: 'MatFree',
@@ -37,13 +37,13 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: 'https://matfree.app',
     siteName: 'MatFree',
-    title: 'MatFree — Free Scientific Computing in Your Browser',
-    description: 'Symbolic math, interactive plots, 200+ functions, audio synthesis, and a full notebook mode. Free forever, runs in your browser.',
+    title: 'MatFree — Free MATLAB Alternative in Your Browser',
+    description: 'MATLAB-style scientific computing in the browser. Matrices, ODE45, FFT, plots, notebooks. Free forever.',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'MatFree — Free Scientific Computing',
-    description: 'Symbolic math, 3D plots, audio synthesis, 200+ built-in functions. Free, in your browser.',
+    title: 'MatFree — Free MATLAB Alternative',
+    description: 'Run MATLAB-style code in your browser. Free, no install, no license.',
   },
   alternates: {
     canonical: 'https://matfree.app',

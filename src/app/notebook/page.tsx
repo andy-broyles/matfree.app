@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Interpreter, Lexer, LexerError, Parser, ParseError, RuntimeError, Value } from '@/engine'
+import { Interpreter, LexerError, ParseError, RuntimeError, Value } from '@/engine'
 import type { PlotFigure, HelpEntry } from '@/engine'
 import type { Environment } from '@/engine/environment'
 import PlotCanvas from '@/components/PlotCanvas'
@@ -10,7 +10,8 @@ import type { Plot3DData } from '@/components/Plot3D'
 import VariableExplorer from '@/components/VariableExplorer'
 import CommandPalette from '@/components/CommandPalette'
 import MathEquationEditor from '@/components/MathEquationEditor'
-import { getAllNotebooks, saveNotebook, loadNotebook, deleteNotebook } from '@/lib/notebookStorage'
+import CodeEditor from '@/components/CodeEditor'
+import { getAllNotebooks, saveNotebook, deleteNotebook } from '@/lib/notebookStorage'
 import type { MFNotebook, StoredCell } from '@/lib/notebookStorage'
 import katex from 'katex'
 
@@ -75,6 +76,51 @@ function storedToCells(stored: StoredCell[]): Cell[] {
   }))
 }
 
+function collectOutputs(interp: Interpreter, code: string): CellOutput[] {
+  const outputs: CellOutput[] = []
+  interp.setOutput((text) => {
+    if (text.startsWith('__audio:')) {
+      outputs.push({ type: 'audio', audioSrc: text.slice(8).trim() })
+    } else if (text.startsWith('__plot3d:')) {
+      try {
+        outputs.push({ type: 'plot3d', plot3d: JSON.parse(text.slice(9).trim()) as Plot3DData })
+      } catch {
+        outputs.push({ type: 'text', text })
+      }
+    } else if (text.includes('__sym:')) {
+      const symMatch = text.match(/__sym:(.+)/)
+      if (symMatch) {
+        try {
+          const html = katex.renderToString(symToLatex(symMatch[1].trim()), { throwOnError: false, displayMode: true })
+          outputs.push({ type: 'latex', html })
+        } catch {
+          outputs.push({ type: 'text', text })
+        }
+      } else {
+        outputs.push({ type: 'text', text })
+      }
+    } else {
+      outputs.push({ type: 'text', text })
+    }
+  })
+  interp.setPlotCallback((fig) => {
+    outputs.push({ type: 'plot', figure: JSON.parse(JSON.stringify(fig)) })
+  })
+  try {
+    interp.setExecutionLimitMs(15_000)
+    interp.execute(code)
+  } catch (e: unknown) {
+    const msg = e instanceof LexerError ? `Lexer Error: ${e.message}`
+      : e instanceof ParseError ? `Parse Error: ${e.message}`
+      : e instanceof RuntimeError ? `Error: ${e.message}`
+      : `Error: ${(e as Error).message ?? e}`
+    outputs.push({ type: 'error', text: msg })
+  } finally {
+    interp.setExecutionLimitMs(10_000)
+  }
+  return outputs
+}
+
 export default function NotebookPage() {
   const [cells, setCells] = useState<Cell[]>([
     { id: uid(), type: 'markdown', content: '# MatFree Notebook\nWrite code and markdown in cells. Run cells with **Ctrl+Enter**.', output: [], running: false },
@@ -83,7 +129,7 @@ export default function NotebookPage() {
   const [notebookName, setNotebookName] = useState('Untitled')
   const [notebooks, setNotebooks] = useState<MFNotebook[]>([])
   const [showNotebooks, setShowNotebooks] = useState(false)
-  const [showVars, setShowVars] = useState(false)
+  const [showVars, setShowVars] = useState(true)
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false)
   const [envSnapshot, setEnvSnapshot] = useState<Environment | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -92,7 +138,11 @@ export default function NotebookPage() {
   const [loadUrlVar, setLoadUrlVar] = useState('data')
   const [showMathEditor, setShowMathEditor] = useState(false)
   const [mathExpr, setMathExpr] = useState('')
+  const [saveMsg, setSaveMsg] = useState('')
+  const [isRunningAll, setIsRunningAll] = useState(false)
   const interpRef = useRef<Interpreter | null>(null)
+  const cellsRef = useRef(cells)
+  cellsRef.current = cells
 
   useEffect(() => { interpRef.current = new Interpreter() }, [])
 
@@ -103,73 +153,47 @@ export default function NotebookPage() {
   const runCell = useCallback((cellId: string) => {
     const interp = interpRef.current
     if (!interp) return
-    setCells(prev => prev.map(c => c.id === cellId ? { ...c, running: true, output: [] } : c))
-
-    const cell = cells.find(c => c.id === cellId)
+    const cell = cellsRef.current.find(c => c.id === cellId)
     if (!cell || cell.type !== 'code') return
 
-    const outputs: CellOutput[] = []
-
-    interp.setOutput((text) => {
-      if (text.startsWith('__audio:')) {
-        outputs.push({ type: 'audio', audioSrc: text.slice(8).trim() })
-      } else if (text.startsWith('__plot3d:')) {
-        try {
-          const d = JSON.parse(text.slice(9).trim()) as Plot3DData
-          outputs.push({ type: 'plot3d', plot3d: d })
-        } catch {
-          outputs.push({ type: 'text', text })
-        }
-      } else if (text.includes('__sym:')) {
-        const symMatch = text.match(/__sym:(.+)/)
-        if (symMatch) {
-          try {
-            const latex = symToLatex(symMatch[1].trim())
-            const html = katex.renderToString(latex, { throwOnError: false, displayMode: true })
-            outputs.push({ type: 'latex', html })
-          } catch {
-            outputs.push({ type: 'text', text })
-          }
-        } else {
-          outputs.push({ type: 'text', text })
-        }
-      } else {
-        outputs.push({ type: 'text', text })
-      }
-    })
-    interp.setPlotCallback((fig) => {
-      outputs.push({ type: 'plot', figure: JSON.parse(JSON.stringify(fig)) })
-    })
-
-    try {
-      interp.execute(cell.content)
-    } catch (e: unknown) {
-      const msg = e instanceof LexerError ? `Lexer Error: ${e.message}`
-        : e instanceof ParseError ? `Parse Error: ${e.message}`
-        : e instanceof RuntimeError ? `Error: ${e.message}`
-        : `Error: ${(e as Error).message ?? e}`
-      outputs.push({ type: 'error', text: msg })
-    }
-
-    setCells(prev => prev.map(c => c.id === cellId ? { ...c, output: [...outputs], running: false } : c))
+    setCells(prev => prev.map(c => c.id === cellId ? { ...c, running: true, output: [] } : c))
+    const outputs = collectOutputs(interp, cell.content)
+    setCells(prev => prev.map(c => c.id === cellId ? { ...c, output: outputs, running: false } : c))
     setEnvSnapshot(interp.currentEnv())
-  }, [cells])
+  }, [])
 
   const runAll = useCallback(() => {
-    interpRef.current = new Interpreter()
-    for (const cell of cells) { if (cell.type === 'code') runCell(cell.id) }
-  }, [cells, runCell])
+    if (isRunningAll) return
+    setIsRunningAll(true)
+    const interp = new Interpreter()
+    interpRef.current = interp
+
+    const snapshot = cellsRef.current
+    const next = snapshot.map(c => ({ ...c, running: false, output: c.type === 'code' ? [] as CellOutput[] : c.output }))
+
+    for (let i = 0; i < next.length; i++) {
+      const cell = next[i]
+      if (cell.type !== 'code' || !cell.content.trim()) continue
+      const outputs = collectOutputs(interp, cell.content)
+      next[i] = { ...cell, running: false, output: outputs }
+    }
+
+    setCells(next)
+    setEnvSnapshot(interp.currentEnv())
+    setIsRunningAll(false)
+  }, [isRunningAll])
 
   const addCell = useCallback((afterId: string, type: 'code' | 'markdown', initialContent = '') => {
-    const idx = cells.findIndex(c => c.id === afterId)
-    const newCell: Cell = { id: uid(), type, content: initialContent, output: [], running: false }
-    setCells(prev => [...prev.slice(0, idx + 1), newCell, ...prev.slice(idx + 1)])
-  }, [cells])
+    setCells(prev => {
+      const idx = prev.findIndex(c => c.id === afterId)
+      const newCell: Cell = { id: uid(), type, content: initialContent, output: [], running: false }
+      return [...prev.slice(0, idx + 1), newCell, ...prev.slice(idx + 1)]
+    })
+  }, [])
 
   const deleteCell = useCallback((cellId: string) => {
-    if (cells.length <= 1) return
-    setCells(prev => prev.filter(c => c.id !== cellId))
-  }, [cells])
+    setCells(prev => prev.length <= 1 ? prev : prev.filter(c => c.id !== cellId))
+  }, [])
 
   const moveCell = useCallback((cellId: string, dir: -1 | 1) => {
     setCells(prev => {
@@ -187,15 +211,19 @@ export default function NotebookPage() {
 
   const handleSave = useCallback(async () => {
     const name = notebookName.trim() || 'Untitled'
-    await saveNotebook({ name, cells: cellsToStored(cells), modified: Date.now() })
+    await saveNotebook({ name, cells: cellsToStored(cellsRef.current), modified: Date.now() })
     setNotebookName(name)
+    setSaveMsg('Saved')
+    setTimeout(() => setSaveMsg(''), 1500)
     refreshNotebooks()
-  }, [cells, notebookName, refreshNotebooks])
+  }, [notebookName, refreshNotebooks])
 
   const handleLoad = useCallback(async (nb: MFNotebook) => {
     setCells(storedToCells(nb.cells))
     setNotebookName(nb.name)
     setShowNotebooks(false)
+    interpRef.current = new Interpreter()
+    setEnvSnapshot(null)
   }, [])
 
   const handleNew = useCallback(() => {
@@ -205,6 +233,8 @@ export default function NotebookPage() {
     ])
     setNotebookName('Untitled')
     setShowNotebooks(false)
+    interpRef.current = new Interpreter()
+    setEnvSnapshot(null)
   }, [])
 
   const handleLoadUrl = useCallback(async () => {
@@ -258,25 +288,26 @@ export default function NotebookPage() {
   }, [])
 
   const handleCmdSelect = useCallback((entry: HelpEntry) => {
-    const firstCode = cells.find(c => c.type === 'code')
+    const firstCode = cellsRef.current.find(c => c.type === 'code')
     if (firstCode) {
       const code = entry.examples?.[0] ?? `help('${entry.name}')`
       updateCell(firstCode.id, firstCode.content ? firstCode.content + '\n\n' + code : code)
     }
-  }, [cells, updateCell])
+  }, [updateCell])
 
   const handleCmdRun = useCallback((code: string) => {
-    const firstCode = cells.find(c => c.type === 'code')
+    const firstCode = cellsRef.current.find(c => c.type === 'code')
     if (firstCode) updateCell(firstCode.id, firstCode.content ? firstCode.content + '\n\n' + code : code)
-  }, [cells, updateCell])
+  }, [updateCell])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); setCmdPaletteOpen(v => !v) }
+      if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleSave() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [handleSave])
 
   return (
     <div
@@ -294,7 +325,7 @@ export default function NotebookPage() {
 
       <header style={{
         position: 'sticky', top: 0, zIndex: 50, background: '#0a0a0f', borderBottom: '1px solid #1e1e2e',
-        padding: '8px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '8px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <a href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -307,16 +338,17 @@ export default function NotebookPage() {
             onChange={e => setNotebookName(e.target.value)}
             style={{ background: '#1e1e2e', border: '1px solid #3a3a52', borderRadius: 6, color: '#e4e4ef', padding: '4px 10px', fontSize: 13, width: 140, fontFamily: 'var(--font-mono)' }}
           />
+          {saveMsg && <span style={{ color: '#22c55e', fontSize: 12 }}>{saveMsg}</span>}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button onClick={() => setShowNotebooks(v => !v)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Notebooks</button>
-          <button onClick={handleSave} style={{ background: '#4f46e5', border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Save</button>
-          <button onClick={() => setCmdPaletteOpen(true)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Search (Ctrl+K)</button>
-          <button onClick={() => setLoadUrlOpen(true)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Load URL</button>
-          <button onClick={() => setShowMathEditor(v => !v)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Math</button>
-          <button onClick={() => setShowVars(v => !v)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>{showVars ? 'Hide Vars' : 'Vars'}</button>
-          <a href="/playground" style={{ color: '#818cf8', fontSize: 12, textDecoration: 'none', padding: '6px 12px', borderRadius: 6, border: '1px solid #3a3a52' }}>Playground</a>
-          <button onClick={runAll} style={{ background: '#22c55e', border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Run All</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowNotebooks(v => !v)} style={hdrBtn}>Notebooks</button>
+          <button onClick={handleSave} style={{ ...hdrBtn, background: '#4f46e5', border: 'none', color: '#fff', fontWeight: 600 }}>Save</button>
+          <button onClick={() => setCmdPaletteOpen(true)} style={hdrBtn}>Search</button>
+          <button onClick={() => setShowVars(v => !v)} style={hdrBtn}>{showVars ? 'Hide Vars' : 'Vars'}</button>
+          <a href="/playground" style={{ ...hdrBtn, textDecoration: 'none', display: 'inline-block' }}>Playground</a>
+          <button onClick={runAll} disabled={isRunningAll} style={{ ...hdrBtn, background: '#22c55e', border: 'none', color: '#fff', fontWeight: 600 }}>
+            {isRunningAll ? 'Running…' : 'Run All'}
+          </button>
         </div>
       </header>
 
@@ -325,6 +357,7 @@ export default function NotebookPage() {
           <div style={{ background: '#12121a', border: '1px solid #2a2a3a', borderRadius: 12, padding: 20, maxWidth: 400, width: '90%' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 16px' }}>Saved Notebooks</h3>
             <button onClick={handleNew} style={{ background: '#4f46e5', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', marginBottom: 12 }}>New Notebook</button>
+            {notebooks.length === 0 && <p style={{ color: '#8888a0', fontSize: 13 }}>No saved notebooks yet.</p>}
             {notebooks.map(nb => (
               <div key={nb.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #2a2a3a' }}>
                 <button onClick={() => handleLoad(nb)} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: 13, textAlign: 'left', flex: 1 }}>{nb.name}</button>
@@ -347,9 +380,9 @@ export default function NotebookPage() {
                 value={mathExpr}
                 onChange={setMathExpr}
                 onInsertCode={(code) => {
-                  const firstCode = cells.find(c => c.type === 'code')
+                  const firstCode = cellsRef.current.find(c => c.type === 'code')
                   if (firstCode) updateCell(firstCode.id, firstCode.content ? firstCode.content + '\n\n' + code : code)
-                  else addCell(cells[0]?.id ?? '', 'code', code)
+                  else addCell(cellsRef.current[0]?.id ?? '', 'code', code)
                   setShowMathEditor(false)
                 }}
               />
@@ -368,7 +401,7 @@ export default function NotebookPage() {
               style={{ width: '100%', background: '#1e1e2e', border: '1px solid #3a3a52', borderRadius: 6, color: '#e4e4ef', padding: '8px 12px', fontSize: 13, marginBottom: 12, boxSizing: 'border-box' }} />
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleLoadUrl} style={{ background: '#22c55e', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Load</button>
-              <button onClick={() => setLoadUrlOpen(false)} style={{ background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '8px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => setLoadUrlOpen(false)} style={hdrBtn}>Cancel</button>
             </div>
           </div>
         </div>
@@ -377,7 +410,7 @@ export default function NotebookPage() {
       <CommandPalette open={cmdPaletteOpen} onClose={() => setCmdPaletteOpen(false)} onSelect={handleCmdSelect} onRun={handleCmdRun} />
 
       <div style={{ display: 'flex', maxWidth: 1200, margin: '0 auto' }}>
-        <div style={{ flex: 1, padding: '24px 20px', maxWidth: showVars ? 720 : 900 }}>
+        <div style={{ flex: 1, padding: '24px 20px', maxWidth: showVars ? 720 : 900, minWidth: 0 }}>
           {cells.map((cell, i) => (
             <div key={cell.id} style={{ marginBottom: 8, borderRadius: 8, border: '1px solid #1e1e2e', background: '#0e0e16' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px', background: '#13131d', borderRadius: '8px 8px 0 0', borderBottom: '1px solid #1e1e2e' }}>
@@ -400,16 +433,12 @@ export default function NotebookPage() {
                 </div>
               </div>
               {cell.type === 'code' ? (
-                <textarea
+                <CodeEditor
                   value={cell.content}
-                  onChange={e => updateCell(cell.id, e.target.value)}
+                  onChange={v => updateCell(cell.id, v)}
                   onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runCell(cell.id) } }}
-                  spellCheck={false}
-                  style={{
-                    width: '100%', minHeight: 60, background: '#0e0e16', color: '#c4c4d8', border: 'none',
-                    padding: '12px 14px', fontSize: 13, fontFamily: 'var(--font-mono)', resize: 'vertical',
-                    outline: 'none', lineHeight: 1.6, boxSizing: 'border-box',
-                  }}
+                  autoHeight
+                  minHeight={72}
                   placeholder="Enter code... (Ctrl+Enter to run)"
                 />
               ) : (
@@ -447,7 +476,7 @@ export default function NotebookPage() {
           ))}
         </div>
         {showVars && (
-          <aside style={{ width: 220, borderLeft: '1px solid #1e1e2e', padding: 12, background: '#0a0a0f' }}>
+          <aside style={{ width: 240, borderLeft: '1px solid #1e1e2e', padding: 12, background: '#0a0a0f', flexShrink: 0 }}>
             <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Workspace</h3>
             <VariableExplorer env={envSnapshot} />
           </aside>
@@ -455,6 +484,10 @@ export default function NotebookPage() {
       </div>
     </div>
   )
+}
+
+const hdrBtn: React.CSSProperties = {
+  background: '#1e1e2e', border: '1px solid #3a3a52', color: '#a0a0b8', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
 }
 
 const tbBtn: React.CSSProperties = {
@@ -466,8 +499,6 @@ function escapeHtml(s: string): string {
 }
 
 function simpleMarkdown(md: string): string {
-  // Escape HTML first — cell content is user input rendered via dangerouslySetInnerHTML,
-  // so raw <script>/<img onerror> must never survive into the output.
   let html = escapeHtml(md)
   html = html.replace(/^### (.+)$/gm, '<h3 style="margin:8px 0;font-size:16px">$1</h3>')
   html = html.replace(/^## (.+)$/gm, '<h2 style="margin:8px 0;font-size:20px">$1</h2>')

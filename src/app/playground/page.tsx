@@ -12,7 +12,8 @@ import Plot3D from '@/components/Plot3D'
 import type { Plot3DData } from '@/components/Plot3D'
 import VariableExplorer from '@/components/VariableExplorer'
 import CommandPalette from '@/components/CommandPalette'
-import Autocomplete from '@/components/Autocomplete'
+import Autocomplete, { getAutocompleteSuggestions } from '@/components/Autocomplete'
+import CodeEditor from '@/components/CodeEditor'
 import FileTree from '@/components/FileTree'
 import type { MFFile } from '@/components/FileTree'
 import MathEquationEditor from '@/components/MathEquationEditor'
@@ -90,6 +91,7 @@ const SHORTCUTS = [
   { keys: 'Shift+Enter', desc: 'Multi-line' },
   { keys: 'Up/Down', desc: 'History' },
   { keys: 'Ctrl+L', desc: 'Clear' },
+  { keys: 'Ctrl+F', desc: 'Find in editor' },
   { keys: 'Ctrl+Enter', desc: 'Run editor' },
   { keys: 'Ctrl+S', desc: 'Share link' },
 ]
@@ -126,10 +128,7 @@ function PlaygroundInner() {
   const [debugBpInput, setDebugBpInput] = useState('1')
   const [lastDebugSnap, setLastDebugSnap] = useState<DebugSnapshot | null>(null)
   const debugRef = useRef<Debugger | null>(null)
-  // Web Worker for background execution (editor Run path)
-  const workerRef = useRef<Worker | null>(null)
-  const [isRunningWorker, setIsRunningWorker] = useState(false)
-  const pendingRunId = useRef<number>(0)
+  const [isRunning, setIsRunning] = useState(false)
 
   const interpRef = useRef<Interpreter | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
@@ -254,8 +253,14 @@ function PlaygroundInner() {
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (acVisible) {
-      if (e.key === 'Tab' || (e.key === 'Enter' && acIdx >= 0)) { e.preventDefault(); /* autocomplete picks up via Autocomplete component */ return }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setAcIdx(i => i + 1); return }
+      const suggestions = getAutocompleteSuggestions(acWord, envSnapshot)
+      if (suggestions.length > 0 && (e.key === 'Tab' || e.key === 'Enter')) {
+        e.preventDefault()
+        const pick = suggestions[Math.min(acIdx, suggestions.length - 1)]
+        if (pick) applyAutocomplete(pick)
+        return
+      }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAcIdx(i => Math.min(i + 1, Math.max(suggestions.length - 1, 0))); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setAcIdx(i => Math.max(i - 1, 0)); return }
       if (e.key === 'Escape') { setAcVisible(false); return }
     }
@@ -267,68 +272,23 @@ function PlaygroundInner() {
     if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setItems([]) }
     if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input || editorCode) }
     if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); setCmdPaletteOpen(true) }
-  }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, updateAcWord])
+  }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, acWord, envSnapshot, applyAutocomplete, updateAcWord])
 
+  // Same interpreter as the REPL so workspace vars stay shared (MATLAB-style).
   const runEditor = useCallback(() => {
-    if (!editorCode.trim()) return
-    // Use worker for the full editor "Run" path (Ctrl+Enter) when possible
-    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
-      try {
-        if (!workerRef.current) {
-          // Vite/Next supports new URL + import.meta.url for worker
-          workerRef.current = new Worker(new URL('../../engine/worker', import.meta.url), { type: 'module' })
-          workerRef.current.onmessage = (ev: MessageEvent<any>) => {
-            const m = ev.data
-            if (!m || typeof m !== 'object') return
-            const id = m.id
-            if (id !== pendingRunId.current) return // stale
-            if (m.type === 'start') {
-              setIsRunningWorker(true)
-              setItems(prev => [...prev, { type: 'input', text: editorCode }])
-              return
-            }
-            if (m.type === 'output') { setItems(prev => [...prev, { type: 'output', text: m.text }]); return }
-            if (m.type === 'plot') { setItems(prev => [...prev, { type: 'plot', figure: m.figure }]); return }
-            if (m.type === 'plot3d') { setItems(prev => [...prev, { type: 'plot3d', plot3d: m.data }]); return }
-            if (m.type === 'audio') { setItems(prev => [...prev, { type: 'audio', audioSrc: m.src }]); return }
-            if (m.type === 'done') {
-              setIsRunningWorker(false)
-              if (m.text) setItems(prev => [...prev, { type: 'output', text: m.text }])
-              updateEnvSnapshot()
-              return
-            }
-            if (m.type === 'error') {
-              setIsRunningWorker(false)
-              setItems(prev => [...prev, { type: 'error', text: (m.line ? `Error (line ${m.line}): ` : 'Error: ') + m.message + '\n' }])
-              return
-            }
-            if (m.type === 'cancelled') {
-              setIsRunningWorker(false)
-              setItems(prev => [...prev, { type: 'info', text: '[cancelled]\n' }])
-              return
-            }
-          }
-        }
-        const id = ++pendingRunId.current
-        setIsRunningWorker(true)
-        workerRef.current.postMessage({ id, type: 'run', code: editorCode, timeLimitMs: 10000 })
-        return
-      } catch {
-        // fall through to sync
-      }
+    if (!editorCode.trim() || isRunning) return
+    setIsRunning(true)
+    try {
+      if (interpRef.current) interpRef.current.setExecutionLimitMs(15000)
+      executeCode(editorCode)
+    } finally {
+      try { interpRef.current?.setExecutionLimitMs(10_000) } catch {}
+      setIsRunning(false)
     }
-    // Fallback sync
-    executeCode(editorCode)
-  }, [editorCode, executeCode, updateEnvSnapshot])
+  }, [editorCode, executeCode, isRunning])
 
   const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runEditor(); return }
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      const ta = e.currentTarget; const start = ta.selectionStart, end = ta.selectionEnd
-      setEditorCode(editorCode.slice(0, start) + '  ' + editorCode.slice(end))
-      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2 }, 0)
-    }
     if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(editorCode) }
   }, [runEditor, editorCode])
 
@@ -456,7 +416,7 @@ function PlaygroundInner() {
           <aside className={styles.sidebar}>
             <FileTree
               visible={showFiles}
-              onOpen={(f: MFFile) => { setEditorCode(f.content); setIsEditorMode(true) }}
+              onOpen={(f: MFFile) => { setEditorCode(f.content); setFileName(f.name); setIsEditorMode(true) }}
               currentCode={editorCode}
               currentName={fileName}
               onNameChange={setFileName}
@@ -486,37 +446,21 @@ function PlaygroundInner() {
           {isEditorMode && (
             <div className={styles.editor}>
               <div className={styles.editorBar}>
-                <span>script.m</span>
+                <span>{fileName}</span>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <button className={styles.runBtn} onClick={runEditor} disabled={isRunningWorker}>Run (Ctrl+Enter)</button>
-                  {isRunningWorker && (
-                    <>
-                      <span style={{ fontSize: 12, opacity: 0.8 }}>running…</span>
-                      <button className={styles.actionBtn} onClick={() => {
-                        if (workerRef.current) {
-                          const id = pendingRunId.current
-                          workerRef.current.postMessage({ id, type: 'cancel' })
-                          // hard terminate to guarantee responsiveness
-                          try { workerRef.current.terminate() } catch {}
-                          workerRef.current = null
-                          setIsRunningWorker(false)
-                          setItems(prev => [...prev, { type: 'info', text: '[terminated]\n' }])
-                        }
-                      }}>Cancel</button>
-                    </>
-                  )}
+                  <button className={styles.runBtn} onClick={runEditor} disabled={isRunning}>
+                    {isRunning ? 'Running…' : 'Run (Ctrl+Enter)'}
+                  </button>
                 </div>
               </div>
               <div className={styles.editorWrap}>
                 <div className={styles.lineNumbers}>
                   {editorCode.split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
                 </div>
-                <textarea
-                  className={styles.editorArea}
+                <CodeEditor
                   value={editorCode}
-                  onChange={e => setEditorCode(e.target.value)}
+                  onChange={setEditorCode}
                   onKeyDown={handleEditorKeyDown}
-                  spellCheck={false}
                   placeholder="Write your code here..."
                 />
               </div>
