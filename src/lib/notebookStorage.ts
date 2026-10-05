@@ -61,6 +61,47 @@ export async function loadNotebook(name: string): Promise<MFNotebook | undefined
   })
 }
 
+// The working copy is autosaved to localStorage so a reload or crash never loses it.
+const DRAFT_KEY = 'mf_notebook_draft'
+
+export interface NotebookDraft {
+  name: string
+  cells: StoredCell[]
+}
+
+// JSON has no NaN/Infinity; plot data needs them (NaN gaps in lines).
+const encodeNonFinite = (_: string, v: unknown) => (typeof v === 'number' && !Number.isFinite(v) ? { __num: String(v) } : v)
+const decodeNonFinite = (_: string, v: unknown) => {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>
+    if (typeof o.__num === 'string' && Object.keys(o).length === 1) return Number(o.__num)
+  }
+  return v
+}
+
+export function loadDraft(): NotebookDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return null
+    const d = JSON.parse(raw, decodeNonFinite) as NotebookDraft
+    if (!d || typeof d.name !== 'string' || !Array.isArray(d.cells)) return null
+    return d
+  } catch {
+    return null
+  }
+}
+
+export function saveDraft(draft: NotebookDraft): void {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft, encodeNonFinite))
+  } catch {
+    // Over quota (usually big plots): keep the code and text, drop the outputs.
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, cells: draft.cells.map(c => ({ ...c, output: [] })) }))
+    } catch { /* storage unavailable */ }
+  }
+}
+
 export async function deleteNotebook(name: string): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {

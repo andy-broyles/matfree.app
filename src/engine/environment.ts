@@ -3,6 +3,9 @@
 import { Value } from './value'
 
 export class Environment {
+  /** Incremented on every mutation of any environment, so callers can skip work when nothing changed. */
+  static version = 0
+
   private variables: Map<string, Value> = new Map()
   private globals: Set<string> = new Set()
   private parent: Environment | null
@@ -26,6 +29,7 @@ export class Environment {
   }
 
   set(name: string, value: Value): void {
+    Environment.version++
     if (this.globals.has(name)) { this.globalEnv.variables.set(name, value); return }
     this.variables.set(name, value)
   }
@@ -37,12 +41,16 @@ export class Environment {
     return false
   }
 
-  declareGlobal(name: string): void { this.globals.add(name) }
+  declareGlobal(name: string): void { Environment.version++; this.globals.add(name) }
 
   getLocal(name: string): Value | undefined { return this.variables.get(name) }
-  setLocal(name: string, value: Value): void { this.variables.set(name, value) }
+  setLocal(name: string, value: Value): void { Environment.version++; this.variables.set(name, value) }
+  deleteLocal(name: string): void { Environment.version++; this.variables.delete(name) }
 
-  clear(): void { this.variables.clear() }
+  clear(): void { Environment.version++; this.variables.clear() }
 
   variableNames(): string[] { return [...this.variables.keys()] }
+  entries(): [string, Value][] { return [...this.variables.entries()] }
+  globalNames(): string[] { return [...this.globals] }
+  parentEnv(): Environment | null { return this.parent }
 }

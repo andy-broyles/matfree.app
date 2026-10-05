@@ -16,12 +16,18 @@ class ContinueSignal { _brand = 'continue' as const }
 class ReturnSignal { value?: Value; constructor(v?: Value) { this.value = v } }
 
 export type OutputCallback = (text: string) => void
+export type FunctionDef = Extract<Stmt, { kind: 'functionDef' }>
+export interface DownloadRequest { name: string; mime: string; content: string }
+export type DownloadCallback = (file: DownloadRequest) => void
 
 export class Interpreter {
   private globalEnv = Environment.createGlobal()
   private env: Environment
-  private userFunctions: Map<string, Extract<Stmt, { kind: 'functionDef' }>> = new Map()
+  private userFunctions: Map<string, FunctionDef> = new Map()
+  private functionsVersion = 0
   private output: OutputCallback = () => {}
+  private downloadCallback: DownloadCallback | null = null
+  private tickCallback: (() => void) | null = null
   // Plotting state
   private plotCallback: PlotCallback = () => {}
   private figures: Map<number, PlotFigure> = new Map()
@@ -71,6 +77,27 @@ export class Interpreter {
   getGlobalEnv(): Environment { return this.globalEnv }
   injectVariable(name: string, value: Value): void { this.globalEnv.set(name, value) }
 
+  getUserFunctions(): FunctionDef[] { return [...this.userFunctions.values()] }
+  defineFunction(fn: FunctionDef): void { this.userFunctions.set(fn.name, fn); this.functionsVersion++ }
+  /** Changes whenever variables or user functions change. */
+  stateVersion(): string { return `${Environment.version}:${this.functionsVersion}` }
+
+  /** Called from every loop iteration and function call while code runs. */
+  setTickCallback(cb: (() => void) | null) { this.tickCallback = cb }
+
+  /** Route file downloads (writematrix, save, ...) somewhere other than the DOM, e.g. from a Web Worker. */
+  setDownloadCallback(cb: DownloadCallback | null) { this.downloadCallback = cb }
+  requestDownload(name: string, mime: string, content: string): void {
+    if (this.downloadCallback) { this.downloadCallback({ name, mime, content }); return }
+    if (typeof document === 'undefined') return
+    const url = URL.createObjectURL(new Blob([content], { type: mime }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   // Plotting API
   getCurrentFigure(): PlotFigure {
     if (!this.figures.has(this.currentFigureId)) {
@@ -90,6 +117,7 @@ export class Interpreter {
   }
 
   private checkDeadline(): void {
+    if (this.tickCallback) this.tickCallback()
     if (this.deadline > 0 && Date.now() > this.deadline) {
       throw new RuntimeError(
         `Execution time limit exceeded (${this.maxExecutionMs / 1000}s). ` +
@@ -107,7 +135,7 @@ export class Interpreter {
     const parser = new Parser(tokens)
     const program = parser.parse()
     // Register top-level functions
-    for (const fn of program.functions) this.userFunctions.set(fn.name, fn)
+    for (const fn of program.functions) this.defineFunction(fn)
     let result = Value.empty()
     for (const stmt of program.statements) {
       if (stmt.kind === 'functionDef') continue // already registered
@@ -163,7 +191,7 @@ export class Interpreter {
       case 'break': throw new BreakSignal()
       case 'continue': throw new ContinueSignal()
       case 'global': stmt.variables.forEach(v => this.env.declareGlobal(v)); return Value.empty()
-      case 'functionDef': this.userFunctions.set(stmt.name, stmt); return Value.empty()
+      case 'functionDef': this.defineFunction(stmt); return Value.empty()
     }
   }
 

@@ -888,15 +888,7 @@ reg('writematrix', (a, interp) => {
   const csv = lines.join('\n')
   if (a.length >= 2 && a[1].isString()) {
     const filename = a[1].string() || 'data.csv'
-    if (typeof document !== 'undefined') {
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename.endsWith('.csv') ? filename : filename + '.csv'
-      link.click()
-      URL.revokeObjectURL(url)
-    }
+    interp.requestDownload(filename.endsWith('.csv') ? filename : filename + '.csv', 'text/csv', csv)
   }
   return Value.fromString(csv)
 })
@@ -967,11 +959,7 @@ reg('writetable', (a, interp) => {
   const csv = lines.join('\n')
   if (a.length > 1 && a[1].isString()) {
     const fn = a[1].string() || 'table.csv'
-    if (typeof document !== 'undefined') {
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a'); link.href = url; link.download = fn.endsWith('.csv') ? fn : fn + '.csv'; link.click(); URL.revokeObjectURL(url)
-    }
+    interp.requestDownload(fn.endsWith('.csv') ? fn : fn + '.csv', 'text/csv', csv)
   }
   return Value.fromString(csv)
 })
@@ -993,11 +981,7 @@ reg('save', (a, interp) => {
   }
   const json = JSON.stringify(snap)
   const name = a.length > 0 && a[0].isString() ? a[0].string() : 'workspace.mat.json'
-  if (typeof document !== 'undefined') {
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a'); link.href = url; link.download = name; link.click(); URL.revokeObjectURL(url)
-  }
+  interp.requestDownload(name, 'application/json', json)
   return Value.fromString(json)
 })
 

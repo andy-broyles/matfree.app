@@ -1,63 +1,13 @@
 'use client'
 
-import { useMemo } from 'react'
-import type { Environment } from '@/engine/environment'
-import type { Value } from '@/engine/value'
-
-interface VarInfo {
-  name: string
-  typeLabel: string
-  size: string
-  preview: string
-}
+import type { VarSummary } from '@/engine/workspace'
 
 interface Props {
-  env: Environment | null
+  vars: VarSummary[]
   onInspect?: (name: string) => void
 }
 
-export default function VariableExplorer({ env, onInspect }: Props) {
-  const vars = useMemo<VarInfo[]>(() => {
-    if (!env) return []
-    const names = env.variableNames()
-    const SKIP = new Set(['pi', 'inf', 'Inf', 'nan', 'NaN', 'true', 'false', 'eps', 'i', 'j', 'ans', 'nargin', 'nargout'])
-    return names
-      .filter(n => !SKIP.has(n))
-      .map(name => {
-        const v = env.get(name) as Value
-        if (!v) return null
-        let typeLabel: string = v.type
-        let size = '1x1'
-        let preview = ''
-        if (v.isMatrix()) {
-          const m = v.matrix()
-          size = `${m.rows}x${m.cols}`
-          typeLabel = 'double'
-          if (m.isScalar()) preview = String(m.scalarValue())
-          else if (m.numel() <= 6) preview = `[${m.data.slice(0, 6).map(v => fmtShort(v)).join(', ')}]`
-          else preview = `[${m.data.slice(0, 4).map(v => fmtShort(v)).join(', ')}, ...]`
-        } else if (v.isString()) {
-          typeLabel = 'char'
-          size = `1x${v.string().length}`
-          preview = `'${v.string().length > 20 ? v.string().slice(0, 20) + '...' : v.string()}'`
-        } else if (v.isStruct()) {
-          typeLabel = 'struct'
-          const keys = Object.keys(v.struct())
-          size = `1x1`
-          preview = `{${keys.slice(0, 3).join(', ')}${keys.length > 3 ? ', ...' : ''}}`
-        } else if (v.isCell()) {
-          typeLabel = 'cell'
-          size = `${v.cell().rows}x${v.cell().cols}`
-          preview = '{...}'
-        } else if (v.isFuncHandle()) {
-          typeLabel = 'function_handle'
-          preview = '@handle'
-        }
-        return { name, typeLabel, size, preview }
-      })
-      .filter(Boolean) as VarInfo[]
-  }, [env])
-
+export default function VariableExplorer({ vars, onInspect }: Props) {
   if (vars.length === 0) {
     return (
       <div style={styles.empty}>
@@ -96,13 +46,6 @@ export default function VariableExplorer({ env, onInspect }: Props) {
       </table>
     </div>
   )
-}
-
-function fmtShort(v: number): string {
-  if (Number.isNaN(v)) return 'NaN'
-  if (!Number.isFinite(v)) return v > 0 ? 'Inf' : '-Inf'
-  if (Number.isInteger(v)) return v.toString()
-  return v.toPrecision(4)
 }
 
 const styles: Record<string, React.CSSProperties> = {

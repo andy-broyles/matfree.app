@@ -1,12 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, Suspense } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import styles from './playground.module.css'
-import { Interpreter, LexerError, ParseError, RuntimeError, Value } from '@/engine'
-import { Debugger, type DebugSnapshot, type DebugAction } from '@/engine/debugger'
 import type { PlotFigure, HelpEntry } from '@/engine'
-import type { Environment } from '@/engine/environment'
 import PlotCanvas from '@/components/PlotCanvas'
 import Plot3D from '@/components/Plot3D'
 import type { Plot3DData } from '@/components/Plot3D'
@@ -18,7 +15,10 @@ import FileTree from '@/components/FileTree'
 import type { MFFile } from '@/components/FileTree'
 import MathEquationEditor from '@/components/MathEquationEditor'
 import { toPython, toJulia } from '@/engine/transpiler'
-import katex from 'katex'
+import { useEngineSession, useElapsedSeconds, hasTextSelection } from '@/lib/useEngineSession'
+import type { RunResult } from '@/lib/engineSession'
+import { appendMerged, classifyOutput } from '@/lib/outputFormat'
+import { csvToAssignment, isValidIdentifier } from '@/lib/csvImport'
 
 interface OutputItem {
   type: 'input' | 'output' | 'error' | 'plot' | 'info' | 'audio' | 'plot3d' | 'latex'
@@ -28,6 +28,18 @@ interface OutputItem {
   plot3d?: Plot3DData
   html?: string
 }
+
+function toOutputItem(text: string): OutputItem {
+  const o = classifyOutput(text)
+  if (o.type === 'latex') return { type: 'latex', html: o.html }
+  if (o.type === 'plot3d') return { type: 'plot3d', plot3d: o.plot3d }
+  if (o.type === 'audio') return { type: 'audio', audioSrc: o.audioSrc }
+  return { type: 'output', text: o.text }
+}
+
+const stoppedMessage = (workspaceCleared: boolean) => workspaceCleared
+  ? 'Stopped. The workspace was too large to keep, so it was cleared.\n'
+  : 'Stopped. Variables are back to how they were before this command.\n'
 
 const EXAMPLES = [
   { cat: 'Plotting', items: [
@@ -93,6 +105,7 @@ const SHORTCUTS = [
   { keys: 'Ctrl+L', desc: 'Clear' },
   { keys: 'Ctrl+F', desc: 'Find in editor' },
   { keys: 'Ctrl+Enter', desc: 'Run editor' },
+  { keys: 'Ctrl+C', desc: 'Stop running code' },
   { keys: 'Ctrl+S', desc: 'Share link' },
 ]
 
@@ -105,7 +118,6 @@ function PlaygroundInner() {
   const [multiline, setMultiline] = useState('')
   const [isEditorMode, setIsEditorMode] = useState(false)
   const [editorCode, setEditorCode] = useState('')
-  const [envSnapshot, setEnvSnapshot] = useState<Environment | null>(null)
   const [showVars, setShowVars] = useState(true)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [shareMsg, setShareMsg] = useState('')
@@ -122,44 +134,17 @@ function PlaygroundInner() {
   const [loadUrlVar, setLoadUrlVar] = useState('data')
   const [showMathEditor, setShowMathEditor] = useState(false)
   const [mathExpr, setMathExpr] = useState('')
-  // Debugger wiring (minimal)
-  const [debugEnabled, setDebugEnabled] = useState(false)
-  const [debugBps, setDebugBps] = useState<number[]>([])
-  const [debugBpInput, setDebugBpInput] = useState('1')
-  const [lastDebugSnap, setLastDebugSnap] = useState<DebugSnapshot | null>(null)
-  const debugRef = useRef<Debugger | null>(null)
-  const [isRunning, setIsRunning] = useState(false)
 
-  const interpRef = useRef<Interpreter | null>(null)
+  const { busy, busySince, vars, canStop, run, stop, reset } = useEngineSession()
+  const elapsed = useElapsedSeconds(busySince)
+  // Fast commands finish before this; avoids flashing the indicator on every Enter.
+  const showBusy = busy && elapsed >= 0.3
+  const varNames = useMemo(() => vars.map(v => v.name), [vars])
+
   const termRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const interp = new Interpreter()
-    interp.setOutput((text) => {
-      if (text.startsWith('__audio:')) {
-        setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
-      } else if (text.startsWith('__plot3d:')) {
-        try { const d = JSON.parse(text.slice(9).trim()); setItems(prev => [...prev, { type: 'plot3d', plot3d: d }]) } catch { setItems(prev => [...prev, { type: 'output', text }]) }
-      } else if (text.includes('__sym:')) {
-        const m = text.match(/__sym:(.+)/)
-        if (m) {
-          try {
-            let latex = m[1].trim()
-            latex = latex.replace(/\bsin\b/g, '\\sin').replace(/\bcos\b/g, '\\cos').replace(/\btan\b/g, '\\tan')
-            latex = latex.replace(/\bexp\b/g, '\\exp').replace(/\bln\b/g, '\\ln').replace(/\blog\b/g, '\\log')
-            latex = latex.replace(/\bsqrt\b/g, '\\sqrt').replace(/\bpi\b/g, '\\pi')
-            latex = latex.replace(/\^(\w)/g, '^{$1}').replace(/\*/g, ' \\cdot ')
-            const html = katex.renderToString(latex, { throwOnError: false, displayMode: true })
-            setItems(prev => [...prev, { type: 'latex', html }])
-          } catch { setItems(prev => [...prev, { type: 'output', text }]) }
-        } else { setItems(prev => [...prev, { type: 'output', text }]) }
-      } else {
-        setItems(prev => [...prev, { type: 'output', text }])
-      }
-    })
-    interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: JSON.parse(JSON.stringify(fig)) }]))
-    interpRef.current = interp
     try { const h = localStorage.getItem('mf_history'); if (h) setHistory(JSON.parse(h)) } catch {}
     try { const c = localStorage.getItem('mf_editor'); if (c) setEditorCode(c) } catch {}
     setItems([
@@ -182,41 +167,31 @@ function PlaygroundInner() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  const updateEnvSnapshot = useCallback(() => {
-    if (interpRef.current) setEnvSnapshot(interpRef.current.currentEnv())
-  }, [])
+  // Ctrl+C interrupts running code (as in MATLAB) unless there is text selected to copy.
+  useEffect(() => {
+    if (!busy || !canStop) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'c' && !hasTextSelection()) { e.preventDefault(); stop() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [busy, canStop, stop])
 
-  const executeCode = useCallback((code: string) => {
-    if (!interpRef.current || !code.trim()) return
-    setItems(prev => [...prev, { type: 'input', text: code }])
-    // Wire debugger if enabled
-    if (debugEnabled) {
-      const d = new Debugger()
-      debugRef.current = d
-      d.start()
-      debugBps.forEach((ln) => d.addBreakpoint(ln))
-      interpRef.current.setDebugger(d)
-    } else {
-      interpRef.current.setDebugger(null)
-      debugRef.current = null
-    }
-    try { interpRef.current.execute(code) }
-    catch (e: any) {
-      const msg = e instanceof LexerError ? `Lexer Error (line ${e.line}): ${e.message}`
-        : e instanceof ParseError ? `Parse Error (line ${e.line}): ${e.message}`
-        : e instanceof RuntimeError ? `Error: ${e.message}`
-        : `Error: ${e.message ?? e}`
-      setItems(prev => [...prev, { type: 'error', text: msg + '\n' }])
-    }
-    // Capture a debug snapshot for display if debugging
-    if (debugEnabled && debugRef.current && interpRef.current) {
-      try {
-        const snap = debugRef.current.createSnapshot(interpRef.current.currentEnv() as any)
-        setLastDebugSnap(snap)
-      } catch { setLastDebugSnap(null) }
-    }
-    updateEnvSnapshot()
-  }, [updateEnvSnapshot, debugEnabled, debugBps])
+  const pushItems = useCallback((next: OutputItem[]) => setItems(prev => appendMerged(prev, next, 'output')), [])
+
+  const executeCode = useCallback((code: string, opts: { echo?: boolean; strings?: Record<string, string> } = {}): Promise<RunResult> => {
+    if (!code.trim()) return Promise.resolve({ status: 'ok' })
+    let started = false
+    return run(code, {
+      onStart: () => { started = true; if (opts.echo !== false) pushItems([{ type: 'input', text: code }]) },
+      onOutput: texts => pushItems(texts.map(toOutputItem)),
+      onPlot: figure => pushItems([{ type: 'plot', figure }]),
+    }, opts.strings).then(result => {
+      if (result.status === 'error') pushItems([{ type: 'error', text: result.error + '\n' }])
+      else if (result.status === 'stopped' && result.reason === 'stop' && started) pushItems([{ type: 'info', text: stoppedMessage(result.workspaceCleared) }])
+      return result
+    })
+  }, [run, pushItems])
 
   const handleSubmit = useCallback(() => {
     if (acVisible) { setAcVisible(false); return }
@@ -253,7 +228,7 @@ function PlaygroundInner() {
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (acVisible) {
-      const suggestions = getAutocompleteSuggestions(acWord, envSnapshot)
+      const suggestions = getAutocompleteSuggestions(acWord, varNames)
       if (suggestions.length > 0 && (e.key === 'Tab' || e.key === 'Enter')) {
         e.preventDefault()
         const pick = suggestions[Math.min(acIdx, suggestions.length - 1)]
@@ -272,20 +247,13 @@ function PlaygroundInner() {
     if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setItems([]) }
     if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input || editorCode) }
     if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); setCmdPaletteOpen(true) }
-  }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, acWord, envSnapshot, applyAutocomplete, updateAcWord])
+  }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, acWord, varNames, applyAutocomplete, updateAcWord])
 
-  // Same interpreter as the REPL so workspace vars stay shared (MATLAB-style).
+  // Same session as the REPL so workspace vars stay shared (MATLAB-style).
   const runEditor = useCallback(() => {
-    if (!editorCode.trim() || isRunning) return
-    setIsRunning(true)
-    try {
-      if (interpRef.current) interpRef.current.setExecutionLimitMs(15000)
-      executeCode(editorCode)
-    } finally {
-      try { interpRef.current?.setExecutionLimitMs(10_000) } catch {}
-      setIsRunning(false)
-    }
-  }, [editorCode, executeCode, isRunning])
+    if (!editorCode.trim() || busy) return
+    executeCode(editorCode)
+  }, [editorCode, executeCode, busy])
 
   const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runEditor(); return }
@@ -300,15 +268,9 @@ function PlaygroundInner() {
   }, [])
 
   const resetSession = useCallback(() => {
-    const interp = new Interpreter()
-    interp.setOutput((text) => {
-      if (text.startsWith('__audio:')) setItems(prev => [...prev, { type: 'audio', audioSrc: text.slice(8).trim() }])
-      else if (text.startsWith('__plot3d:')) { try { const d = JSON.parse(text.slice(9).trim()); setItems(prev => [...prev, { type: 'plot3d', plot3d: d }]) } catch {} }
-      else setItems(prev => [...prev, { type: 'output', text }])
-    })
-    interp.setPlotCallback((fig) => setItems(prev => [...prev, { type: 'plot', figure: JSON.parse(JSON.stringify(fig)) }]))
-    interpRef.current = interp; setItems([]); setEnvSnapshot(null)
-  }, [])
+    reset()
+    setItems([])
+  }, [reset])
 
   // CSV drag & drop
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -318,21 +280,17 @@ function PlaygroundInner() {
     const reader = new FileReader()
     reader.onload = (ev) => {
       const text = ev.target?.result as string
-      if (!text) return
-      const lines = text.trim().split('\n')
-      const data = lines.map(line => line.split(/[,\t]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v)))
-      const rows = data.length, cols = Math.max(...data.map(r => r.length))
-      const flat: number[] = []
-      for (const row of data) { for (let c = 0; c < cols; c++) flat.push(row[c] ?? 0) }
-      if (interpRef.current) {
-        const varName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').replace(/^[0-9]/, '_$&')
-        const code = `${varName} = reshape([${flat.join(',')}], ${cols}, ${rows})'`
-        executeCode(code)
-        setItems(prev => [...prev, { type: 'info', text: `Imported ${file.name} as '${varName}' (${rows}x${cols} matrix)\n` }])
+      const csv = text ? csvToAssignment(file.name, text) : null
+      if (!csv) {
+        pushItems([{ type: 'error', text: `No numeric data found in ${file.name}\n` }])
+        return
       }
+      executeCode(csv.code, { echo: false }).then(result => {
+        if (result.status === 'ok') pushItems([{ type: 'info', text: `Imported ${file.name} as '${csv.varName}' (${csv.rows}x${csv.cols} matrix)\n` }])
+      })
     }
     reader.readAsText(file)
-  }, [executeCode])
+  }, [executeCode, pushItems])
 
   const handleCmdSelect = useCallback((entry: HelpEntry) => {
     executeCode(`help('${entry.name}')`)
@@ -340,21 +298,27 @@ function PlaygroundInner() {
 
   const handleLoadUrl = useCallback(async () => {
     const url = loadUrlInput.trim()
+    const name = loadUrlVar.trim()
     if (!url) return
+    if (!isValidIdentifier(name)) {
+      pushItems([{ type: 'error', text: `'${name}' is not a valid variable name (use letters, digits and _; start with a letter)\n` }])
+      return
+    }
+    setShowLoadUrl(false)
     try {
       const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const text = await res.text()
-      const interp = interpRef.current
-      if (!interp) return
-      interp.injectVariable('__url_content', Value.fromString(text))
-      executeCode(`${loadUrlVar} = readcsv(__url_content)`)
-      setItems(prev => [...prev, { type: 'info', text: `Loaded CSV from URL as '${loadUrlVar}'\n` }])
-      setShowLoadUrl(false)
-      setLoadUrlInput('')
+      const result = await executeCode(`${name} = readcsv(__url_content);`, { echo: false, strings: { __url_content: text } })
+      if (result.status === 'ok') {
+        pushItems([{ type: 'info', text: `Loaded CSV from URL as '${name}'\n` }])
+        setLoadUrlInput('')
+      }
     } catch (e) {
-      setItems(prev => [...prev, { type: 'error', text: `Failed to load URL: ${(e as Error).message}\n` }])
+      const hint = e instanceof TypeError ? ' (the server may not allow cross-origin requests)' : ''
+      pushItems([{ type: 'error', text: `Failed to load URL: ${(e as Error).message}${hint}\n` }])
     }
-  }, [loadUrlInput, loadUrlVar, executeCode])
+  }, [loadUrlInput, loadUrlVar, executeCode, pushItems])
 
   const handleExampleClick = useCallback((code: string) => {
     if (isEditorMode) setEditorCode(code); else executeCode(code)
@@ -386,9 +350,6 @@ function PlaygroundInner() {
           </button>
           <button className={styles.actionBtn} onClick={() => setShowVars(v => !v)}>
             {showVars ? 'Hide Vars' : 'Vars'}
-          </button>
-          <button className={styles.actionBtn} onClick={() => { const next = !debugEnabled; setDebugEnabled(next); if (!next) { setLastDebugSnap(null); if (interpRef.current) interpRef.current.setDebugger(null) } }} title="Enable minimal debugger (breakpoints + snapshot)">
-            {debugEnabled ? 'Debug On' : 'Debug'}
           </button>
           <button className={styles.actionBtn} onClick={() => {
             setExportLang(exportLang ? null : 'python')
@@ -447,10 +408,11 @@ function PlaygroundInner() {
             <div className={styles.editor}>
               <div className={styles.editorBar}>
                 <span>{fileName}</span>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <button className={styles.runBtn} onClick={runEditor} disabled={isRunning}>
-                    {isRunning ? 'Running…' : 'Run (Ctrl+Enter)'}
-                  </button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {showBusy && <span className={styles.runningLabel}>Running {elapsed.toFixed(1)}s</span>}
+                  {busy && canStop
+                    ? <button className={styles.stopBtn} onClick={stop} title="Stop running code (Ctrl+C)">Stop</button>
+                    : <button className={styles.runBtn} onClick={runEditor} disabled={busy}>Run (Ctrl+Enter)</button>}
                 </div>
               </div>
               <div className={styles.editorWrap}>
@@ -485,12 +447,20 @@ function PlaygroundInner() {
                 </div>
               )
             })}
+            {showBusy && (
+              <div className={styles.busyLine}>
+                <span className={styles.busyDot} />
+                <span>Running… {elapsed.toFixed(1)}s</span>
+                {canStop && <button className={styles.busyStop} onClick={e => { e.stopPropagation(); stop() }}>Stop</button>}
+                {canStop && <span className={styles.busyHint}>or press Ctrl+C</span>}
+              </div>
+            )}
             <div className={styles.inputLine} style={{ position: 'relative' }}>
               <Autocomplete
                 query={acWord}
                 visible={acVisible}
                 selectedIdx={acIdx}
-                env={envSnapshot}
+                varNames={varNames}
                 onSelect={applyAutocomplete}
               />
               <span className={styles.promptChar}>{multiline ? '.. ' : '>> '}</span>
@@ -512,38 +482,7 @@ function PlaygroundInner() {
         {showVars && (
           <aside className={styles.rightPanel}>
             <h3>Workspace</h3>
-            <VariableExplorer env={envSnapshot} onInspect={(name) => executeCode(`disp(${name})`)} />
-          </aside>
-        )}
-
-        {debugEnabled && (
-          <aside className={styles.rightPanel} style={{ marginTop: showVars ? 8 : 0 }}>
-            <h3>Debugger</h3>
-            <div style={{ fontSize: 12, marginBottom: 6 }}>
-              Breakpoints: {debugBps.length ? debugBps.join(', ') : '(none)'}
-            </div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-              <input value={debugBpInput} onChange={(e) => setDebugBpInput(e.target.value)} placeholder="line" style={{ width: 60 }} />
-              <button onClick={() => { const ln = parseInt(debugBpInput, 10); if (ln > 0) { setDebugBps(p => Array.from(new Set([...p, ln])).sort((a,b)=>a-b)) } }}>Add BP</button>
-              <button onClick={() => { const ln = parseInt(debugBpInput, 10); if (ln > 0) setDebugBps(p => p.filter(x => x !== ln)) }}>Remove</button>
-              <button onClick={() => setDebugBps([])}>Clear</button>
-            </div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-              <button onClick={() => { if (interpRef.current && debugRef.current) { debugRef.current.resume('stepOver'); /* re-run to advance */ runEditor() } }}>Step</button>
-              <button onClick={() => { if (debugRef.current) debugRef.current.resume('continue'); runEditor() }}>Continue</button>
-              <button onClick={() => { setDebugEnabled(false); if (interpRef.current) interpRef.current.setDebugger(null); setLastDebugSnap(null) }}>Stop</button>
-            </div>
-            {lastDebugSnap && (
-              <div style={{ fontSize: 11, borderTop: '1px solid #2a2a3a', paddingTop: 6, marginTop: 4 }}>
-                <div>Paused line ~{lastDebugSnap.line} • {lastDebugSnap.state}</div>
-                <div style={{ maxHeight: 120, overflow: 'auto', marginTop: 4 }}>
-                  {lastDebugSnap.variables.length === 0 ? <em>(no vars)</em> : lastDebugSnap.variables.map((v, i) => (
-                    <div key={i}>{v.name}: {v.value}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {!lastDebugSnap && <div style={{ fontSize: 11, opacity: .7 }}>Set BPs, run (Ctrl+Enter), use Step/Continue.</div>}
+            <VariableExplorer vars={vars} onInspect={(name) => executeCode(`disp(${name})`)} />
           </aside>
         )}
       </div>

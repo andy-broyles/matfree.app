@@ -14,16 +14,16 @@ export const metadata: Metadata = {
   },
 }
 
-const ROWS = [
-  { feature: 'Price', matfree: 'Free forever', matlab: '$99–$2,150+/yr' },
-  { feature: 'Install', matfree: 'None — opens in a browser tab', matlab: 'Multi‑GB desktop install' },
+const ROWS: { feature: string; matfree: string; matlab: React.ReactNode }[] = [
+  { feature: 'Price', matfree: 'Free — no account, no license', matlab: <>Paid licenses (student, home, commercial) — <a href="https://www.mathworks.com/pricing-licensing.html" target="_blank" rel="noopener noreferrer">MathWorks pricing</a></> },
+  { feature: 'Install', matfree: 'None — opens in a browser tab', matlab: 'Desktop install, or MATLAB Online in a browser (MathWorks account required)' },
   { feature: 'Syntax', matfree: 'MATLAB‑style (.m‑like)', matlab: 'MATLAB' },
   { feature: 'Matrices & linear algebra', matfree: 'Yes (det, inv, eig, SVD, …)', matlab: 'Yes' },
-  { feature: 'ODE solvers', matfree: 'ode45 and friends', matlab: 'Extensive toolbox' },
-  { feature: 'FFT / signal tools', matfree: 'Yes', matlab: 'Yes (Signal Processing Toolbox)' },
-  { feature: '2D / 3D plots', matfree: 'Interactive plots in‑page', matlab: 'Desktop figure windows' },
+  { feature: 'ODE solvers', matfree: 'ode45 (adaptive Dormand–Prince)', matlab: 'Full suite (ode45, ode23, ode15s, ode113, …)' },
+  { feature: 'FFT / signal tools', matfree: 'fft, ifft, windows, chirp, xcorr built in', matlab: 'fft built in; many signal functions need Signal Processing Toolbox' },
+  { feature: '2D / 3D plots', matfree: 'Interactive plots inline (zoom, pan, rotate)', matlab: 'Figure windows and Live Editor' },
   { feature: 'Notebooks', matfree: 'Built‑in notebook mode', matlab: 'Live Editor' },
-  { feature: 'Offline / local compute', matfree: 'Runs in your browser', matlab: 'Desktop / licensed cloud' },
+  { feature: 'Where code runs', matfree: 'Locally, in your browser tab', matlab: 'Your computer (desktop) or MathWorks cloud (MATLAB Online)' },
   { feature: 'Best for', matfree: 'Learning, demos, quick analysis, teaching', matlab: 'Industry, research toolboxes, Simulink' },
 ]
 

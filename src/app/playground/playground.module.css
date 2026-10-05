@@ -44,6 +44,17 @@
 .editorBar { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 .runBtn { background: var(--green); color: #000; border: none; padding: 4px 14px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
 .runBtn:hover { opacity: 0.9; transform: translateY(-1px); }
+.stopBtn { background: var(--red); color: #fff; border: none; padding: 4px 14px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.stopBtn:hover { opacity: 0.9; }
+.runningLabel { color: var(--yellow); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Shown above the prompt while code runs */
+.busyLine { display: flex; align-items: center; gap: 10px; margin: 4px 0; color: var(--yellow); font-size: 12px; font-variant-numeric: tabular-nums; }
+.busyDot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); animation: busyPulse 1s ease-in-out infinite; }
+.busyStop { background: none; border: 1px solid var(--red); color: var(--red); padding: 1px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit; }
+.busyStop:hover { background: var(--red); color: #fff; }
+.busyHint { color: var(--text-muted); font-size: 11px; }
+@keyframes busyPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .editorWrap { flex: 1; display: flex; overflow: auto; background: var(--terminal-bg); }
 .lineNumbers { padding: 16px 0; width: 40px; text-align: right; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: #3a3a52; user-select: none; flex-shrink: 0; }
 .lineNumbers div { padding-right: 10px; }

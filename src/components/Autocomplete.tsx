@@ -2,29 +2,28 @@
 
 import { useMemo } from 'react'
 import { allBuiltinNames } from '@/engine'
-import type { Environment } from '@/engine/environment'
 
 interface Props {
   query: string
   visible: boolean
   selectedIdx: number
-  env: Environment | null
+  varNames: string[]
   onSelect: (name: string) => void
   style?: React.CSSProperties
 }
 
-export function getAutocompleteSuggestions(query: string, env: Environment | null): string[] {
+export function getAutocompleteSuggestions(query: string, varNames: string[]): string[] {
   if (!query) return []
   const q = query.toLowerCase()
   const builtins = allBuiltinNames().filter(n => n.toLowerCase().startsWith(q) && n !== q)
-  const vars = env ? env.variableNames().filter(n => n.toLowerCase().startsWith(q) && n !== q) : []
+  const vars = varNames.filter(n => n.toLowerCase().startsWith(q) && n !== q)
   return [...new Set([...vars, ...builtins])].sort().slice(0, 12)
 }
 
-export default function Autocomplete({ query, visible, selectedIdx, env, onSelect, style }: Props) {
+export default function Autocomplete({ query, visible, selectedIdx, varNames, onSelect, style }: Props) {
   const suggestions = useMemo(
-    () => (visible ? getAutocompleteSuggestions(query, env) : []),
-    [query, visible, env],
+    () => (visible ? getAutocompleteSuggestions(query, varNames) : []),
+    [query, visible, varNames],
   )
 
   if (!visible || suggestions.length === 0) return null
