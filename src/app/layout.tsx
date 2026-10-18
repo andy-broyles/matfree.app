@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     default: 'MatFree — Free MATLAB Alternative in Your Browser',
     template: '%s | MatFree',
   },
-  description: 'Free MATLAB-style scientific computing in your browser. Matrices, ODE45, FFT, plots, notebooks — no install, no license. 200+ built-in functions.',
+  description: 'A free MATLAB alternative in your browser. Matrices, ODE45, FFT, plots, and notebooks — no install, no license.',
   keywords: [
     'free matlab alternative', 'matlab online', 'matlab in browser', 'octave alternative',
     'scientific computing', 'matrix calculator', 'linear algebra', 'numerical analysis',
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     url: 'https://matfree.app',
     siteName: 'MatFree',
     title: 'MatFree — Free MATLAB Alternative in Your Browser',
-    description: 'MATLAB-style scientific computing in the browser. Matrices, ODE45, FFT, plots, notebooks. Free forever.',
+    description: 'A free MATLAB alternative in your browser. Matrices, ODE45, FFT, plots, and notebooks. No install, no license.',
   },
   twitter: {
     card: 'summary_large_image',
@@ -71,8 +71,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               '@context': 'https://schema.org',
               '@type': 'WebApplication',
               name: 'MatFree',
+              alternateName: ['MatFree.app'],
               url: 'https://matfree.app',
-              description: 'Free scientific computing environment with symbolic math, 3D plots, audio synthesis, and 200+ built-in functions. Runs in your browser.',
+              description: 'Free MATLAB-style scientific computing in the browser. Matrices, ODE45, FFT, plots, notebooks, and 200+ built-in functions.',
+              disambiguatingDescription: 'In-browser app for MATLAB-style code. Not the matfree Python package for JAX.',
               applicationCategory: 'EducationalApplication',
               operatingSystem: 'Any',
               offers: {

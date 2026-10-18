@@ -39,6 +39,7 @@ export default function Autocomplete({ query, visible, selectedIdx, varNames, on
           <span style={styles.name}>{name}</span>
         </div>
       ))}
+      <div style={styles.hint}>Tab to complete</div>
     </div>
   )
 }
@@ -48,4 +49,5 @@ const styles: Record<string, React.CSSProperties> = {
   item: { padding: '6px 12px', cursor: 'pointer', transition: 'background 0.1s', display: 'flex', alignItems: 'center' },
   itemActive: { background: '#2a2a3a' },
   name: { fontFamily: 'var(--font-mono, monospace)', fontSize: 13, color: '#c8c8dc' },
+  hint: { padding: '4px 12px', fontSize: 11, color: '#666680', borderTop: '1px solid #2a2a3a' },
 }

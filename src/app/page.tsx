@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import styles from './page.module.css'
 
 const EXAMPLES = [
@@ -11,20 +11,18 @@ const EXAMPLES = [
 ]
 
 export default function Home() {
-  const router = useRouter()
-
   return (
     <div className={styles.page}>
       <nav className={styles.nav}>
         <div className={styles.navInner}>
-          <div className={styles.logo}>
+          <Link href="/" className={styles.logo}>
             <span className={styles.logoIcon}>M</span>
             <span className={styles.logoText}>MatFree</span>
-          </div>
+          </Link>
           <div className={styles.navLinks}>
-            <button className={styles.navCta} onClick={() => router.push('/playground')}>
-              Open Playground
-            </button>
+            <Link href="/notebook">Notebook</Link>
+            <Link href="/compare/matlab">Compare</Link>
+            <Link href="/playground" className={styles.navCta}>Open Playground</Link>
           </div>
         </div>
       </nav>
@@ -33,18 +31,33 @@ export default function Home() {
         <section className={styles.hero}>
           <div className={styles.heroGlow} />
           <h1 className={styles.heroTitle}>
+            <span className={styles.heroBrand}>MatFree</span>
             Scientific computing,<br />
             <span className={styles.heroAccent}>free and in your browser.</span>
           </h1>
           <p className={styles.heroSub}>
-            Symbolic math, interactive plots, audio synthesis, 200+ built-in functions, and a full
-            scientific computing engine. In your browser. No installation. No license. Just math.
+            A free MATLAB alternative. Symbolic math, interactive plots, audio synthesis, and 200+
+            built-in functions. No installation. No license.
           </p>
           <div className={styles.heroCtas}>
-            <button className={styles.ctaPrimary} onClick={() => router.push('/playground')}>
-              Try it now
-            </button>
+            <Link href="/playground" className={styles.ctaPrimary}>Try it now</Link>
+            <Link href="/compare/matlab" className={styles.ctaSecondary}>Compare with MATLAB</Link>
           </div>
+        </section>
+
+        <section className={styles.pitch}>
+          <h2>A free MATLAB alternative</h2>
+          <p>
+            MatFree is for MATLAB-style scientific computing without a license or an install.
+            Matrices, plots, ODE45, FFT, and notebooks run in the browser tab.
+          </p>
+          <p>
+            This site is not the matfree Python package. That project is matrix-free linear
+            algebra for JAX, on PyPI and GitHub. MatFree.app is the browser app.
+          </p>
+          <p>
+            <Link href="/compare/matlab">See how MatFree compares with MATLAB, Octave, and FreeMat</Link>
+          </p>
         </section>
 
         <section className={styles.tutorial}>
@@ -54,7 +67,7 @@ export default function Home() {
             <li>
               <span className={styles.stepNum}>1</span>
               <span className={styles.stepBody}>
-                <strong>Open Playground or Notebook</strong> — Click &quot;Open Playground&quot; above (or <button type="button" className={styles.stepLink} onClick={() => router.push('/playground')}>here</button>) for a quick REPL. For structured work with multiple cells, use the <button type="button" className={styles.stepLink} onClick={() => router.push('/notebook')}>Notebook</button>.
+                <strong>Open Playground or Notebook</strong> — Use the <Link href="/playground" className={styles.stepLink}>Playground</Link> for a quick REPL. For structured work with multiple cells, use the <Link href="/notebook" className={styles.stepLink}>Notebook</Link>.
               </span>
             </li>
             <li>
@@ -122,21 +135,26 @@ export default function Home() {
         <section className={styles.examples}>
           <h2>Try these examples</h2>
           <div className={styles.exampleGrid}>
-            {EXAMPLES.map((ex, i) => (
-              <button
-                key={i}
+            {EXAMPLES.map((ex) => (
+              <Link
+                key={ex.title}
+                href={`/playground?code=${encodeURIComponent(ex.code)}`}
                 className={styles.exampleCard}
-                onClick={() => router.push(`/playground?code=${encodeURIComponent(ex.code)}`)}
               >
                 <h4>{ex.title}</h4>
                 <pre className={styles.exampleCode}>{ex.code}</pre>
-              </button>
+              </Link>
             ))}
           </div>
         </section>
       </main>
 
       <footer className={styles.footer}>
+        <nav className={styles.footerNav} aria-label="Footer">
+          <Link href="/playground">Playground</Link>
+          <Link href="/notebook">Notebook</Link>
+          <Link href="/compare/matlab">Compare with MATLAB</Link>
+        </nav>
         <p>&copy; {new Date().getFullYear()} MatFree</p>
       </footer>
     </div>

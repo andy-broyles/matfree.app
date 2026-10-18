@@ -2,14 +2,37 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import styles from './compare.module.css'
 
+const FAQS: { q: string; a: string }[] = [
+  {
+    q: 'Is MatFree a free MATLAB alternative?',
+    a: 'Yes. MatFree runs MATLAB-style code in the browser: matrices, linear algebra, ode45, FFT, plots, and notebooks. There is no install and no license. It does not include Simulink or the full set of MATLAB toolboxes.',
+  },
+  {
+    q: 'Is MatFree the same as the matfree Python package?',
+    a: 'No. The matfree package on PyPI is matrix-free linear algebra for JAX. MatFree.app is a separate browser app for MATLAB-style scientific computing.',
+  },
+  {
+    q: 'How is MatFree different from GNU Octave?',
+    a: 'GNU Octave is the closest free desktop environment to MATLAB and can run many existing .m files. MatFree opens in a browser tab and covers core numerics, plotting, and notebooks. It is not a drop-in replacement for every Octave or MATLAB script.',
+  },
+  {
+    q: 'Can I use MatFree instead of FreeMat?',
+    a: 'FreeMat was a free MATLAB-like desktop program, and it has not had a public release in years. MatFree is a browser option for that kind of work: matrices, plots, and MATLAB-style syntax, with nothing to install.',
+  },
+  {
+    q: 'Do I need an account?',
+    a: 'No. Open the playground or the notebook and run code. Computation stays in your browser tab.',
+  },
+]
+
 export const metadata: Metadata = {
   title: 'Free MATLAB Alternative in Your Browser',
   description:
-    'MatFree is a free MATLAB alternative that runs in your browser — matrices, ODE45, FFT, plots, notebooks, no install, no license.',
+    'MatFree is a free MATLAB alternative in the browser — matrices, ODE45, FFT, plots, and notebooks. How it compares with MATLAB, Octave, and FreeMat.',
   alternates: { canonical: 'https://matfree.app/compare/matlab' },
   openGraph: {
     title: 'MatFree — Free MATLAB Alternative',
-    description: 'Scientific computing in the browser. No install. No license. MATLAB-style syntax.',
+    description: 'MATLAB-style scientific computing in the browser, compared with MATLAB, Octave, and FreeMat. No install. No license.',
     url: 'https://matfree.app/compare/matlab',
   },
 }
@@ -67,9 +90,9 @@ export default function CompareMatlabPage() {
           <tbody>
             {ROWS.map(row => (
               <tr key={row.feature}>
-                <td>{row.feature}</td>
-                <td>{row.matfree}</td>
-                <td>{row.matlab}</td>
+                <td data-label="Feature">{row.feature}</td>
+                <td data-label="MatFree">{row.matfree}</td>
+                <td data-label="MATLAB">{row.matlab}</td>
               </tr>
             ))}
           </tbody>
@@ -93,6 +116,48 @@ export default function CompareMatlabPage() {
             <li>Your workload needs maximum numeric depth across every toolbox</li>
           </ul>
         </section>
+
+        <section className={styles.section}>
+          <h2>Octave and FreeMat</h2>
+          <p>
+            GNU Octave is the usual answer when someone wants a free MATLAB-style desktop
+            program. It is a close syntax match and can run many existing <code>.m</code> files.
+            MatFree is the version you open in a tab: core numerics, plots, and notebooks, without
+            claiming to run every Octave or MATLAB script.
+          </p>
+          <p>
+            FreeMat filled a similar role on the desktop, and its last public release was years
+            ago. If you are looking for a FreeMat alternative you can use immediately, start in
+            the <Link href="/playground">MatFree playground</Link>.
+          </p>
+        </section>
+
+        <section className={styles.section}>
+          <h2>Common questions</h2>
+          <div className={styles.faq}>
+            {FAQS.map(item => (
+              <div key={item.q}>
+                <h3>{item.q}</h3>
+                <p>{item.a}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'FAQPage',
+              mainEntity: FAQS.map(item => ({
+                '@type': 'Question',
+                name: item.q,
+                acceptedAnswer: { '@type': 'Answer', text: item.a },
+              })),
+            }),
+          }}
+        />
 
         <section className={styles.bottomCta}>
           <h2>Try it in under a minute</h2>

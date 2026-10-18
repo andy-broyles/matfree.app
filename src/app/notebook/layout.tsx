@@ -1,11 +1,11 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Notebook — Jupyter-Style Scientific Computing',
-  description: 'Create interactive notebooks with code cells, markdown, plots, and LaTeX math rendering. Like Jupyter, but for MatFree — free and in your browser.',
+  title: 'Notebook — MATLAB-Style Notebooks in the Browser',
+  description: 'Notebooks for MATLAB-style code, with plots, markdown, and LaTeX. Free, in your browser, no install.',
   openGraph: {
-    title: 'MatFree Notebook — Interactive Scientific Notebooks',
-    description: 'Jupyter-style notebooks with code, markdown, plots, and LaTeX math. Free, in your browser.',
+    title: 'MatFree Notebook — MATLAB-Style Notebooks in the Browser',
+    description: 'Notebooks for MATLAB-style code, with plots and LaTeX. Free, in your browser, no install.',
     url: 'https://matfree.app/notebook',
   },
   alternates: {

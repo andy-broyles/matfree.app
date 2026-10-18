@@ -194,7 +194,7 @@ function PlaygroundInner() {
   }, [run, pushItems])
 
   const handleSubmit = useCallback(() => {
-    if (acVisible) { setAcVisible(false); return }
+    setAcVisible(false)
     const code = multiline ? multiline + '\n' + input : input
     if (!code.trim()) return
     if (checkContinuation(code)) { setMultiline(code); setInput(''); return }
@@ -204,12 +204,13 @@ function PlaygroundInner() {
     try { localStorage.setItem('mf_history', JSON.stringify(newHist)) } catch {}
     setHistIdx(-1); setInput('')
     executeCode(code)
-  }, [input, multiline, executeCode, history, acVisible])
+  }, [input, multiline, executeCode, history])
 
-  // Extract current word for autocomplete
+  // Extract current word for autocomplete. Nothing is highlighted until the user
+  // arrows into the list, so Enter keeps running the command as typed.
   const updateAcWord = useCallback((val: string) => {
     const match = val.match(/([a-zA-Z_]\w*)$/)
-    if (match && match[1].length >= 2) { setAcWord(match[1]); setAcVisible(true); setAcIdx(0) }
+    if (match && match[1].length >= 2) { setAcWord(match[1]); setAcVisible(true); setAcIdx(-1) }
     else { setAcVisible(false); setAcWord('') }
   }, [])
 
@@ -227,23 +228,22 @@ function PlaygroundInner() {
   }, [input])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (acVisible) {
-      const suggestions = getAutocompleteSuggestions(acWord, varNames)
-      if (suggestions.length > 0 && (e.key === 'Tab' || e.key === 'Enter')) {
+    const suggestions = acVisible ? getAutocompleteSuggestions(acWord, varNames) : []
+    if (suggestions.length > 0) {
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && acIdx >= 0)) {
         e.preventDefault()
-        const pick = suggestions[Math.min(acIdx, suggestions.length - 1)]
-        if (pick) applyAutocomplete(pick)
+        applyAutocomplete(suggestions[Math.min(Math.max(acIdx, 0), suggestions.length - 1)])
         return
       }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setAcIdx(i => Math.min(i + 1, Math.max(suggestions.length - 1, 0))); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setAcIdx(i => Math.max(i - 1, 0)); return }
-      if (e.key === 'Escape') { setAcVisible(false); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAcIdx(i => Math.min(i + 1, suggestions.length - 1)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setAcIdx(i => Math.max(i - 1, -1)); return }
     }
-    if (e.key === 'Tab' && !acVisible) { e.preventDefault(); updateAcWord(input); return }
+    if (acVisible && e.key === 'Escape') { setAcVisible(false); return }
+    if (e.key === 'Tab') { e.preventDefault(); updateAcWord(input); return }
     if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); setMultiline(prev => prev ? prev + '\n' + input : input); setInput(''); return }
     if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); return }
-    if (e.key === 'ArrowUp' && !acVisible) { e.preventDefault(); const idx = Math.min(histIdx + 1, history.length - 1); setHistIdx(idx); if (history[idx]) setInput(history[idx]) }
-    if (e.key === 'ArrowDown' && !acVisible) { e.preventDefault(); const idx = Math.max(histIdx - 1, -1); setHistIdx(idx); setInput(idx >= 0 ? history[idx] : '') }
+    if (e.key === 'ArrowUp') { e.preventDefault(); const idx = Math.min(histIdx + 1, history.length - 1); setHistIdx(idx); if (history[idx]) setInput(history[idx]) }
+    if (e.key === 'ArrowDown') { e.preventDefault(); const idx = Math.max(histIdx - 1, -1); setHistIdx(idx); setInput(idx >= 0 ? history[idx] : '') }
     if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setItems([]) }
     if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input || editorCode) }
     if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); setCmdPaletteOpen(true) }

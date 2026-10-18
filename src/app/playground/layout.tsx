@@ -1,11 +1,11 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Playground — Interactive REPL & Editor',
-  description: 'Write and run scientific computing code instantly. Interactive REPL, code editor, 200+ built-in functions, plotting, symbolic math, and audio synthesis. Free, no installation.',
+  title: 'Playground — MATLAB-Style Code in the Browser',
+  description: 'Write and run MATLAB-style code free in your browser. REPL, plots, symbolic math, ODE45, and 200+ functions. No install.',
   openGraph: {
-    title: 'MatFree Playground — Interactive Scientific Computing',
-    description: 'Write and run scientific computing code instantly in your browser. Interactive plots, symbolic calculus, audio synthesis.',
+    title: 'MatFree Playground — MATLAB-Style Code in the Browser',
+    description: 'Write and run MATLAB-style code free in your browser. Plots, symbolic math, and ODE45. No install.',
     url: 'https://matfree.app/playground',
   },
   alternates: {

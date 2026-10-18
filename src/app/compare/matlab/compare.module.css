@@ -56,6 +56,8 @@
   padding: 6px 12px;
   border-radius: 6px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .main {
@@ -162,6 +164,22 @@
   line-height: 1.7;
 }
 
+.section p {
+  color: var(--text-muted);
+  line-height: 1.7;
+  margin-bottom: 12px;
+  max-width: 68ch;
+}
+
+.faq h3 {
+  font-size: 16px;
+  margin: 18px 0 6px;
+}
+
+.faq p {
+  margin-bottom: 0;
+}
+
 .section code {
   font-family: var(--font-mono);
   background: var(--bg-elevated);
@@ -189,8 +207,29 @@
 }
 
 @media (max-width: 640px) {
-  .table th:nth-child(3),
-  .table td:nth-child(3) {
-    display: none;
+  .table thead { display: none; }
+  .table,
+  .table tbody,
+  .table tr,
+  .table td { display: block; width: 100%; }
+  .table tr {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .table td {
+    border-bottom: 1px solid var(--border);
+  }
+  .table td:last-child { border-bottom: none; }
+  .table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 }

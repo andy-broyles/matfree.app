@@ -1,3 +1,11 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.matfree.app" }],
+      "destination": "https://matfree.app/:path*",
+      "permanent": true
+    }
+  ]
 }
