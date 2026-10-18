@@ -27,6 +27,11 @@ export class Matrix {
   /** Optional imaginary parts (same layout as data). Set by fft(); consumed by
    *  abs(), ifft(), fftshift(). Other operations act on the real part only. */
   imag?: number[]
+  /** MATLAB logical class (results of comparisons, ~, &, |, true/false, isnan, ...).
+   *  Only indexing and class queries look at it; arithmetic produces doubles. */
+  logical?: boolean
+  /** Character array stored as char codes. Display and class() treat it as char. */
+  chars?: boolean
 
   constructor(rows: number, cols: number, data?: number[], imag?: number[]) {
     assertAllocSize(rows * cols, `${rows}x${cols} matrix`)
@@ -36,6 +41,27 @@ export class Matrix {
   }
 
   static scalar(v: number): Matrix { return new Matrix(1, 1, [v]) }
+  static logicalFrom(rows: number, cols: number, data: number[]): Matrix {
+    const m = new Matrix(rows, cols, data)
+    m.logical = true
+    return m
+  }
+  /** Build a matrix from elements listed in MATLAB (column-major) order. */
+  static fromColumnMajor(rows: number, cols: number, values: number[], imag?: number[]): Matrix {
+    const m = new Matrix(rows, cols)
+    for (let k = 0; k < values.length; k++) {
+      const r = k % rows, c = (k - r) / rows
+      m.data[r * cols + c] = values[k]
+    }
+    if (imag) {
+      m.imag = new Array(rows * cols).fill(0)
+      for (let k = 0; k < imag.length; k++) {
+        const r = k % rows, c = (k - r) / rows
+        m.imag[r * cols + c] = imag[k]
+      }
+    }
+    return m
+  }
   static zeros(r: number, c: number): Matrix { return new Matrix(r, c) }
   static ones(r: number, c: number): Matrix { return new Matrix(r, c, new Array(r * c).fill(1)) }
   static eye(n: number): Matrix { const m = new Matrix(n, n); for (let i = 0; i < n; i++) m.set(i, i, 1); return m }
@@ -83,7 +109,25 @@ export class Matrix {
   clone(): Matrix {
     const m = new Matrix(this.rows, this.cols, [...this.data])
     if (this.imag) m.imag = [...this.imag]
+    if (this.logical) m.logical = true
+    if (this.chars) m.chars = true
     return m
+  }
+
+  /** Elements in MATLAB linear-index (column-major) order. */
+  columnMajor(): number[] {
+    const out = new Array(this.data.length)
+    let k = 0
+    for (let c = 0; c < this.cols; c++) for (let r = 0; r < this.rows; r++) out[k++] = this.data[r * this.cols + c]
+    return out
+  }
+
+  columnMajorImag(): number[] | undefined {
+    if (!this.imag) return undefined
+    const out = new Array(this.imag.length)
+    let k = 0
+    for (let c = 0; c < this.cols; c++) for (let r = 0; r < this.rows; r++) out[k++] = this.imag[r * this.cols + c]
+    return out
   }
 
   transpose(): Matrix {
@@ -95,6 +139,7 @@ export class Matrix {
       for (let r = 0; r < this.rows; r++)
         for (let c = 0; c < this.cols; c++) m.imag![c * this.rows + r] = this.imag[r * this.cols + c]
     }
+    if (this.logical) m.logical = true
     return m
   }
 
@@ -133,6 +178,23 @@ export class Matrix {
   mul(o: Matrix): Matrix {
     if (this.cols !== o.rows) throw new RuntimeError(`Matrix dimensions do not agree for multiplication: ${this.rows}x${this.cols} * ${o.rows}x${o.cols}`)
     const m = new Matrix(this.rows, o.cols)
+    if (this.imag || o.imag) {
+      const ai = this.imag, bi = o.imag
+      m.imag = new Array(this.rows * o.cols).fill(0)
+      for (let r = 0; r < this.rows; r++)
+        for (let c = 0; c < o.cols; c++) {
+          let re = 0, im = 0
+          for (let k = 0; k < this.cols; k++) {
+            const xr = this.data[r * this.cols + k], xi = ai ? ai[r * this.cols + k] : 0
+            const yr = o.data[k * o.cols + c], yi = bi ? bi[k * o.cols + c] : 0
+            re += xr * yr - xi * yi
+            im += xr * yi + xi * yr
+          }
+          m.data[r * o.cols + c] = re
+          m.imag[r * o.cols + c] = im
+        }
+      return m
+    }
     for (let r = 0; r < this.rows; r++)
       for (let c = 0; c < o.cols; c++) { let s = 0; for (let k = 0; k < this.cols; k++) s += this.get(r, k) * o.get(k, c); m.set(r, c, s) }
     return m
@@ -172,13 +234,20 @@ export class Matrix {
   elementPow(o: Matrix): Matrix {
     const [rr, cc] = this.broadcastSize(o)
     const m = new Matrix(rr, cc)
-    const hasIm = !!(this.imag || o.imag)
+    // A negative real base with a fractional exponent has a complex result in MATLAB.
+    let hasIm = !!(this.imag || o.imag)
+    if (!hasIm) {
+      outer: for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+        const br = o.getWithBroadcast(r, c)
+        if (this.getWithBroadcast(r, c) < 0 && !Number.isInteger(br) && Number.isFinite(br)) { hasIm = true; break outer }
+      }
+    }
     if (hasIm) m.imag = new Array(rr * cc).fill(0)
     for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
       const ar = this.getWithBroadcast(r, c), br = o.getWithBroadcast(r, c)
       const ai = this.imag ? this.getImWithBroadcast(r, c) : 0
       const bi = o.imag ? o.getImWithBroadcast(r, c) : 0
-      if (ai === 0 && bi === 0) {
+      if (ai === 0 && bi === 0 && !(ar < 0 && !Number.isInteger(br) && Number.isFinite(br))) {
         m.set(r, c, Math.pow(ar, br))
       } else if (bi === 0) {
         // base complex, real exponent
@@ -281,7 +350,9 @@ export class Matrix {
   }
 
   horzcat(o: Matrix): Matrix {
-    if (this.rows !== o.rows) throw new RuntimeError('Horizontal cat: row mismatch')
+    if (this.rows === 0 && this.cols === 0) return o.clone()
+    if (o.rows === 0 && o.cols === 0) return this.clone()
+    if (this.rows !== o.rows) throw new RuntimeError('Dimensions of arrays being concatenated are not consistent.')
     const m = new Matrix(this.rows, this.cols + o.cols)
     const hasIm = !!(this.imag || o.imag)
     if (hasIm) m.imag = new Array((this.cols + o.cols) * this.rows).fill(0)
@@ -295,11 +366,14 @@ export class Matrix {
         if (hasIm) m.imag![r * (this.cols + o.cols) + this.cols + c] = o.imag ? o.imag[r * o.cols + c] : 0
       }
     }
+    if (this.logical && o.logical) m.logical = true
     return m
   }
 
   vertcat(o: Matrix): Matrix {
-    if (this.cols !== o.cols) throw new RuntimeError('Vertical cat: col mismatch')
+    if (this.rows === 0 && this.cols === 0) return o.clone()
+    if (o.rows === 0 && o.cols === 0) return this.clone()
+    if (this.cols !== o.cols) throw new RuntimeError('Dimensions of arrays being concatenated are not consistent.')
     const m = new Matrix(this.rows + o.rows, this.cols)
     const hasIm = !!(this.imag || o.imag)
     if (hasIm) m.imag = new Array(this.cols * (this.rows + o.rows)).fill(0)
@@ -311,18 +385,31 @@ export class Matrix {
       m.set(this.rows + r, c, o.get(r, c))
       if (hasIm) m.imag![(this.rows + r) * this.cols + c] = o.imag ? o.imag[r * this.cols + c] : 0
     }
+    if (this.logical && o.logical) m.logical = true
     return m
   }
 
+  /** MATLAB reshape: elements keep their column-major order. */
   reshape(r: number, c: number): Matrix {
-    if (r * c !== this.numel()) throw new RuntimeError('reshape: numel mismatch')
-    const m = new Matrix(r, c, [...this.data])
-    if (this.imag) m.imag = [...this.imag]
+    if (r * c !== this.numel()) {
+      throw new RuntimeError(`Number of elements must not change. Use [] as one of the size inputs to automatically calculate the appropriate size for that dimension.`)
+    }
+    const m = Matrix.fromColumnMajor(r, c, this.columnMajor(), this.columnMajorImag())
+    if (this.logical) m.logical = true
     return m
   }
 
   toString(): string {
     if (this.numel() === 0) return '[]'
+    if (this.chars) {
+      const lines: string[] = []
+      for (let r = 0; r < this.rows; r++) {
+        let row = ''
+        for (let c = 0; c < this.cols; c++) row += String.fromCharCode(this.get(r, c))
+        lines.push(row)
+      }
+      return lines.join('\n')
+    }
     if (this.isScalar()) return formatComplex(this.data[0], this.imag ? this.imag[0] : 0)
     const lines: string[] = []
     for (let r = 0; r < this.rows; r++) {
@@ -385,7 +472,7 @@ export class Value {
   static fromMatrix(m: Matrix): Value { return new Value('matrix', m) }
   static fromScalar(v: number): Value { return new Value('matrix', Matrix.scalar(v)) }
   static fromString(s: string): Value { return new Value('string', undefined, s) }
-  static fromLogical(b: boolean): Value { return new Value('matrix', Matrix.scalar(b ? 1 : 0)) }
+  static fromLogical(b: boolean): Value { return new Value('matrix', Matrix.logicalFrom(1, 1, [b ? 1 : 0])) }
   static fromCell(c: CellArray): Value { return new Value('cell', undefined, undefined, c) }
   static fromStruct(s: MFStruct): Value { return new Value('struct', undefined, undefined, undefined, s) }
   static fromFuncHandle(f: FuncHandle): Value { return new Value('funcHandle', undefined, undefined, undefined, undefined, f) }
@@ -429,9 +516,10 @@ export class Value {
     throw new RuntimeError('Cannot convert to scalar')
   }
 
+  /** MATLAB truth: non-empty and every element nonzero. */
   toBool(): boolean {
-    if (this.isMatrix()) return this.matrix().data.every(v => v !== 0)
-    if (this.isString()) return this._string!.length > 0
+    if (this.isMatrix()) { const d = this.matrix().data; return d.length > 0 && d.every(v => v !== 0) }
+    if (this.isString()) return this._string!.length > 0 && [...this._string!].every(c => c.charCodeAt(0) !== 0)
     return false
   }
 
@@ -439,9 +527,33 @@ export class Value {
     if (this.isMatrix()) return this.matrix()
     if (this.isString()) {
       const d = [...this._string!].map(c => c.charCodeAt(0))
-      return new Matrix(1, d.length, d)
+      return new Matrix(d.length === 0 ? 0 : 1, d.length, d)
     }
-    throw new RuntimeError('Cannot convert to matrix')
+    if (this.isEmpty()) return new Matrix(0, 0)
+    if (this.isCell()) throw new RuntimeError('Conversion to double from cell is not possible.')
+    if (this.isStruct()) throw new RuntimeError('Conversion to double from struct is not possible.')
+    throw new RuntimeError('Conversion to double from function_handle is not possible.')
+  }
+
+  /** [rows, cols] as MATLAB's size() reports them. */
+  dims(): [number, number] {
+    if (this.isMatrix()) return [this._matrix!.rows, this._matrix!.cols]
+    if (this.isString()) return this._string!.length === 0 ? [0, 0] : [1, this._string!.length]
+    if (this.isCell()) return [this._cell!.rows, this._cell!.cols]
+    if (this.isEmpty()) return [0, 0]
+    return [1, 1]
+  }
+
+  /** MATLAB class name. */
+  className(): string {
+    switch (this.type) {
+      case 'matrix': return this._matrix!.chars ? 'char' : this._matrix!.logical ? 'logical' : 'double'
+      case 'string': return 'char'
+      case 'cell': return 'cell'
+      case 'struct': return 'struct'
+      case 'funcHandle': return 'function_handle'
+      default: return 'double'
+    }
   }
 
   display(name?: string): string {
@@ -461,8 +573,34 @@ export class Value {
       const lines = Object.keys(s).map(k => `    ${k}: ${s[k].display().trim()}`)
       return `${label} =\n  struct with fields:\n${lines.join('\n')}\n`
     }
-    if (this.isCell()) return `${label} = {${this._cell!.rows}x${this._cell!.cols} cell}\n`
+    if (this.isCell()) {
+      const c = this._cell!
+      if (c.data.length === 0) return `${label} =\n  ${c.rows}x${c.cols} empty cell array\n`
+      const lines: string[] = []
+      for (let r = 0; r < c.rows; r++) {
+        const items: string[] = []
+        for (let k = 0; k < c.cols; k++) items.push(`{${cellElementSummary(c.data[r * c.cols + k])}}`)
+        lines.push('    ' + items.join('    '))
+      }
+      return `${label} =\n  ${c.rows}x${c.cols} cell array\n${lines.join('\n')}\n`
+    }
     if (this.isFuncHandle()) return `${label} = @function_handle\n`
-    return `${label} = [empty]\n`
+    return `${label} = []\n`
   }
+}
+
+/** How a value appears inside braces when a cell array is displayed. */
+function cellElementSummary(v: Value | undefined): string {
+  if (!v || v.isEmpty()) return '0x0 double'
+  if (v.isString()) return `'${v.string()}'`
+  if (v.isMatrix()) {
+    const m = v.matrix()
+    const cls = m.logical ? 'logical' : 'double'
+    if (m.numel() === 0) return `${m.rows}x${m.cols} ${cls}`
+    if (m.rows === 1 && m.cols <= 10) return `[${m.data.map((re, i) => formatComplex(re, m.imag ? m.imag[i] : 0)).join(' ')}]`
+    return `${m.rows}x${m.cols} ${cls}`
+  }
+  if (v.isCell()) { const c = v.cell(); return `${c.rows}x${c.cols} cell` }
+  if (v.isStruct()) return '1x1 struct'
+  return '@function_handle'
 }

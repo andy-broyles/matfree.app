@@ -4,7 +4,9 @@ import { Lexer } from './lexer'
 import { Parser } from './parser'
 import { Expr, Stmt, Program } from './ast'
 import { TokenType } from './token'
-import { Value, Matrix, RuntimeError, FuncHandle, CellArray, assertAllocSize } from './value'
+import { Value, Matrix, RuntimeError, FuncHandle, assertAllocSize } from './value'
+import { COLON, toSubscript, indexValue, assignIndexed, assignBraced, braceValues, type Subscript } from './indexing'
+import { mldivide, matrixPower } from './linalg'
 import type { Debugger } from './debugger'
 import { Environment } from './environment'
 import { getBuiltin, hasBuiltin } from './builtins'
@@ -55,8 +57,6 @@ export class Interpreter {
     this.globalEnv.set('Inf', Value.fromScalar(Infinity))
     this.globalEnv.set('nan', Value.fromScalar(NaN))
     this.globalEnv.set('NaN', Value.fromScalar(NaN))
-    this.globalEnv.set('true', Value.fromLogical(true))
-    this.globalEnv.set('false', Value.fromLogical(false))
     this.globalEnv.set('eps', Value.fromScalar(2.220446049250313e-16))
     // Complex units: 0 + 1i
     const oneImag = new Matrix(1, 1, [0], [1])
@@ -215,53 +215,62 @@ export class Interpreter {
   }
 
   private assignTarget(target: Expr, val: Value): void {
-    if (target.kind === 'identifier') { this.env.set(target.name, val); return }
+    this.store(target, val)
+  }
+
+  /** Write next into target, including A(i)=, c{i}=, and nested s.a(i)=. */
+  private store(target: Expr, next: Value): void {
+    if (target.kind === 'identifier') { this.env.set(target.name, next); return }
     if (target.kind === 'dot') {
-      const objName = target.object.kind === 'identifier' ? target.object.name : null
-      if (!objName) throw new RuntimeError('Invalid assignment target')
-      let obj = this.env.get(objName)
-      if (!obj || !obj.isStruct()) obj = Value.fromStruct({})
-      const s = { ...obj.struct() }
-      s[target.field] = val
-      this.env.set(objName, Value.fromStruct(s))
+      const parent = this.loadBase(target.object)
+      const s = parent && parent.isStruct() ? { ...parent.struct() } : {}
+      s[target.field] = next
+      this.store(target.object, Value.fromStruct(s))
       return
     }
     if (target.kind === 'call') {
-      // Indexed assignment: A(i) = val or A(i,j) = val
-      const objName = target.callee.kind === 'identifier' ? target.callee.name : null
-      if (!objName) throw new RuntimeError('Invalid indexed assignment')
-      let m = this.env.get(objName)
-      if (!m) { m = Value.fromMatrix(new Matrix(0, 0)); this.env.set(objName, m) }
-      if (!m.isMatrix()) throw new RuntimeError('Indexed assignment only works on matrices')
-      const mat = m.matrix().clone()
-      if (target.args.length === 1) {
-        const idx = this.evalExpr(target.args[0]).toScalar() - 1
-        if (idx >= 0 && idx < mat.numel()) mat.data[idx] = val.toScalar()
-        this.env.set(objName, Value.fromMatrix(mat))
-      } else if (target.args.length === 2) {
-        const ri = this.evalExpr(target.args[0]).toScalar() - 1
-        const ci = this.evalExpr(target.args[1]).toScalar() - 1
-        // Grow matrix if needed
-        const nr = Math.max(mat.rows, ri + 1), nc = Math.max(mat.cols, ci + 1)
-        const grown = new Matrix(nr, nc)
-        for (let r = 0; r < mat.rows; r++) for (let c = 0; c < mat.cols; c++) grown.set(r, c, mat.get(r, c))
-        grown.set(ri, ci, val.toScalar())
-        this.env.set(objName, Value.fromMatrix(grown))
-      }
+      const parent = this.loadBase(target.callee)
+      this.store(target.callee, assignIndexed(parent, this.subscripts(parent, target.args), next, true))
       return
     }
     if (target.kind === 'cellIndex') {
-      const objName = target.object.kind === 'identifier' ? target.object.name : null
-      if (!objName) throw new RuntimeError('Invalid cell assignment')
-      let obj = this.env.get(objName)
-      if (!obj || !obj.isCell()) throw new RuntimeError('Cell indexing on non-cell')
-      const c = { ...obj.cell(), data: [...obj.cell().data] }
-      const idx = this.evalExpr(target.indices[0]).toScalar() - 1
-      c.data[idx] = val
-      this.env.set(objName, Value.fromCell(c))
+      const parent = this.loadBase(target.object)
+      this.store(target.object, assignBraced(parent, this.subscripts(parent, target.indices), next, true))
       return
     }
     throw new RuntimeError('Invalid assignment target')
+  }
+
+  /** The value currently stored at an assignment base, or undefined if it does not exist yet. */
+  private loadBase(expr: Expr): Value | undefined {
+    if (expr.kind === 'identifier') return this.env.get(expr.name)
+    if (expr.kind === 'dot') {
+      const parent = this.loadBase(expr.object)
+      if (!parent || !parent.isStruct()) return undefined
+      return parent.struct()[expr.field]
+    }
+    if (expr.kind === 'cellIndex') {
+      const parent = this.loadBase(expr.object)
+      if (!parent) return undefined
+      const vals = braceValues(parent, this.subscripts(parent, expr.indices))
+      return vals.length === 1 ? vals[0] : undefined
+    }
+    if (expr.kind === 'call') {
+      const parent = this.loadBase(expr.callee)
+      if (!parent) return undefined
+      return indexValue(parent, this.subscripts(parent, expr.args))
+    }
+    return undefined
+  }
+
+  /** Evaluate index expressions. `end` is the length of its own dimension; a bare colon selects all. */
+  private subscripts(base: Value | undefined, args: Expr[]): Subscript[] {
+    const [rows, cols] = base ? base.dims() : [0, 0]
+    return args.map((arg, i) => {
+      if (arg.kind === 'colon' && !arg.start && !arg.stop) return COLON
+      const extent = args.length === 1 ? rows * cols : (i === 0 ? rows : cols)
+      return toSubscript(this.resolveEnd(arg, extent), i + 1)
+    })
   }
 
   private execMultiAssign(stmt: Extract<Stmt, { kind: 'multiAssign' }>): Value {
@@ -335,13 +344,18 @@ export class Interpreter {
   private execSwitch(stmt: Extract<Stmt, { kind: 'switch' }>): Value {
     const expr = this.evalExpr(stmt.expression)
     for (const c of stmt.cases) {
-      if (!c.value) { return this.execBlock(c.body) }
-      const cv = this.evalExpr(c.value)
-      if (expr.isString() && cv.isString() ? expr.string() === cv.string() : expr.toScalar() === cv.toScalar()) {
-        return this.execBlock(c.body)
-      }
+      if (!c.value) return this.execBlock(c.body)
+      if (this.switchMatches(expr, this.evalExpr(c.value))) return this.execBlock(c.body)
     }
     return Value.empty()
+  }
+
+  /** A cell case matches when any element matches, the way MATLAB's switch does. */
+  private switchMatches(expr: Value, candidate: Value): boolean {
+    if (candidate.isCell()) return candidate.cell().data.some(item => !!item && this.switchMatches(expr, item))
+    if (expr.isString() && candidate.isString()) return expr.string() === candidate.string()
+    if (expr.isString() || candidate.isString()) return false
+    return expr.toScalar() === candidate.toScalar()
   }
 
   private execTryCatch(stmt: Extract<Stmt, { kind: 'tryCatch' }>): Value {
@@ -406,8 +420,22 @@ export class Interpreter {
     switch (expr.op) {
       case TokenType.MINUS: return val.isMatrix() ? Value.fromMatrix(val.matrix().neg()) : Value.fromScalar(-val.toScalar())
       case TokenType.PLUS: return val
-      case TokenType.NOT: return val.isMatrix() ? Value.fromMatrix(new Matrix(val.matrix().rows, val.matrix().cols, val.matrix().data.map(v => v === 0 ? 1 : 0))) : Value.fromLogical(!val.toBool())
-      case TokenType.TRANSPOSE: case TokenType.DOT_TRANSPOSE: return Value.fromMatrix(val.toMatrix().transpose())
+      case TokenType.NOT: {
+        if (!val.isMatrix()) return Value.fromLogical(!val.toBool())
+        const m = val.matrix()
+        return Value.fromMatrix(Matrix.logicalFrom(m.rows, m.cols, m.data.map(v => v === 0 ? 1 : 0)))
+      }
+      case TokenType.TRANSPOSE: case TokenType.DOT_TRANSPOSE: {
+        if (val.isString()) {
+          const codes = [...val.string()].map(ch => ch.charCodeAt(0))
+          const m = new Matrix(codes.length, codes.length ? 1 : 0, codes)
+          m.chars = true
+          return Value.fromMatrix(m)
+        }
+        const transposed = val.toMatrix().transpose()
+        if (val.isMatrix() && val.matrix().chars) transposed.chars = true
+        return Value.fromMatrix(transposed)
+      }
       default: throw new RuntimeError(`Unknown unary op`)
     }
   }
@@ -444,26 +472,25 @@ export class Interpreter {
           if (lm.imag || rm.imag) return Value.fromMatrix(lm.elementDiv(rm))
           return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '/'))
         }
-        throw new RuntimeError('Matrix right division not yet implemented')
+        return this.divideMatrices(rm.transpose(), lm.transpose(), true)
+      case TokenType.BACKSLASH:
+        return this.divideMatrices(lm, rm, false)
       case TokenType.CARET:
-        if (rm.isScalar()) {
+        if (!rm.isScalar()) throw new RuntimeError('Matrix power requires scalar exponent')
+        {
           const n = rm.scalarValue()
-          if (n === -1) return Value.fromMatrix(lm.inv())
           if (lm.isScalar()) {
             const re = lm.scalarValue(), im = lm.imag ? lm.imag[0] : 0
             if (!im) return Value.fromScalar(Math.pow(re, n))
-            // complex ^ real via polar
             const mag = Math.hypot(re, im)
             const ang = Math.atan2(im, re)
             const magp = Math.pow(mag, n)
             const angp = ang * n
-            const r2 = magp * Math.cos(angp)
-            const i2 = magp * Math.sin(angp)
-            return Value.fromMatrix(new Matrix(1, 1, [r2], [i2]))
+            return Value.fromMatrix(new Matrix(1, 1, [magp * Math.cos(angp)], [magp * Math.sin(angp)]))
           }
-          throw new RuntimeError('Matrix power only supports ^-1 and scalar base')
+          if (!Number.isInteger(n)) throw new RuntimeError('Matrix power requires an integer exponent')
+          return Value.fromMatrix(matrixPower(lm, n))
         }
-        throw new RuntimeError('Matrix power requires scalar exponent')
       case TokenType.DOT_STAR: return Value.fromMatrix(lm.elementMul(rm))
       case TokenType.DOT_SLASH: return Value.fromMatrix(lm.elementDiv(rm))
       case TokenType.DOT_CARET: return Value.fromMatrix(lm.elementPow(rm))
@@ -479,13 +506,25 @@ export class Interpreter {
     }
   }
 
+  private divideMatrices(a: Matrix, b: Matrix, transposeResult: boolean): Value {
+    const solved = mldivide(a, b)
+    if (solved.warning) this.print('Warning: ' + solved.warning + '\n')
+    return Value.fromMatrix(transposeResult ? solved.x.transpose() : solved.x)
+  }
+
   private evalMatrixLiteral(expr: Extract<Expr, { kind: 'matrix' }>): Value {
     if (expr.rows.length === 0) return Value.fromMatrix(new Matrix(0, 0))
+    const evaluated = expr.rows.map(row => row.map(e => this.evalExpr(e)))
+    if (evaluated.every(row => row.length > 0 && row.every(v => v.isString()))) {
+      const lines = evaluated.map(row => row.map(v => v.string()).join(''))
+      if (lines.length === 1) return Value.fromString(lines[0])
+      throw new RuntimeError('Character arrays with more than one row are not supported yet. Use a cell array of character vectors instead.')
+    }
     const rows: Matrix[] = []
-    for (const row of expr.rows) {
+    for (const row of evaluated) {
       let combined: Matrix | null = null
-      for (const e of row) {
-        const v = this.evalExpr(e); const m = v.toMatrix()
+      for (const v of row) {
+        const m = v.toMatrix()
         combined = combined ? combined.horzcat(m) : m
       }
       if (combined) rows.push(combined)
@@ -515,9 +554,9 @@ export class Interpreter {
       const variable = this.env.get(name)
       if (variable) {
         if (variable.isFuncHandle()) return this.callFuncHandle(variable.funcHandle(), expr.args.map(a => this.evalExpr(a)), nargout)
-        if (variable.isMatrix()) return this.indexMatrix(variable.matrix(), expr.args)
-        if (variable.isCell()) return this.indexCell(variable.cell(), expr.args)
-        if (variable.isStruct()) return variable // struct() call
+        if (variable.isMatrix() || variable.isString() || variable.isCell() || variable.isStruct()) {
+          return indexValue(variable, this.subscripts(variable, expr.args))
+        }
       }
       // Check user functions
       const fn = this.userFunctions.get(name)
@@ -526,100 +565,46 @@ export class Interpreter {
       if (hasBuiltin(name)) return this.callBuiltin(name, expr.args.map(a => this.evalExpr(a)), nargout)
       throw new RuntimeError(`Undefined function '${name}'`)
     }
+    // true/false are keywords, so true(m, n) arrives as a call on a bool literal.
+    if (expr.callee.kind === 'bool') {
+      return this.callBuiltin(expr.callee.value ? 'true' : 'false', expr.args.map(a => this.evalExpr(a)), nargout)
+    }
     // Dynamic call (e.g., result of expression)
     const callee = this.evalExpr(expr.callee)
     if (callee.isFuncHandle()) return this.callFuncHandle(callee.funcHandle(), expr.args.map(a => this.evalExpr(a)), nargout)
+    if (callee.isMatrix() || callee.isString() || callee.isCell() || callee.isStruct()) {
+      return indexValue(callee, this.subscripts(callee, expr.args))
+    }
     throw new RuntimeError('Cannot call non-function value')
-  }
-
-  private indexMatrix(m: Matrix, args: Expr[]): Value {
-    if (args.length === 1) {
-      const arg = args[0]
-      if (arg.kind === 'colon' && !arg.start && !arg.stop) {
-        // A(:) - flatten
-        return Value.fromMatrix(new Matrix(m.numel(), 1, [...m.data]))
-      }
-      // resolveEnd (not evalExpr) so `v(end)` / `v(end-1)` work with one index
-      const idx = this.resolveEnd(arg, m.numel())
-      if (idx.isMatrix()) {
-        const idxM = idx.matrix()
-        if (idxM.isScalar()) {
-          const i = idxM.scalarValue() - 1
-          return Value.fromScalar(m.data[i])
-        }
-        const result = new Array(idxM.numel())
-        for (let i = 0; i < idxM.numel(); i++) result[i] = m.data[idxM.data[i] - 1]
-        return Value.fromMatrix(new Matrix(idxM.rows, idxM.cols, result))
-      }
-      return Value.fromScalar(m.data[idx.toScalar() - 1])
-    }
-    if (args.length === 2) {
-      const rowIdx = this.resolveIndex(args[0], m.rows)
-      const colIdx = this.resolveIndex(args[1], m.cols)
-      if (rowIdx.length === 1 && colIdx.length === 1) return Value.fromScalar(m.get(rowIdx[0], colIdx[0]))
-      const result = new Matrix(rowIdx.length, colIdx.length)
-      for (let ri = 0; ri < rowIdx.length; ri++)
-        for (let ci = 0; ci < colIdx.length; ci++)
-          result.set(ri, ci, m.get(rowIdx[ri], colIdx[ci]))
-      return Value.fromMatrix(result)
-    }
-    throw new RuntimeError('Too many indices')
-  }
-
-  private resolveIndex(arg: Expr, size: number): number[] {
-    if (arg.kind === 'colon' && !arg.start && !arg.stop) return Array.from({ length: size }, (_, i) => i)
-    const v = this.resolveEnd(arg, size)
-    const m = v.toMatrix()
-    return m.data.map(i => i - 1) // convert to 0-indexed
-  }
-
-  private resolveEnd(expr: Expr, size: number): Value {
-    if (expr.kind === 'end') return Value.fromScalar(size)
-    if (expr.kind === 'binary') {
-      const origExpr = expr
-      // Need to resolve 'end' within binary expressions
-      const left = this.resolveEnd(origExpr.left, size)
-      const right = this.resolveEnd(origExpr.right, size)
-      // Apply the binary op
-      const lm = left.toMatrix(), rm = right.toMatrix()
-      switch (origExpr.op) {
-        case TokenType.PLUS: return Value.fromMatrix(lm.add(rm))
-        case TokenType.MINUS: return Value.fromMatrix(lm.sub(rm))
-        case TokenType.STAR:
-          if (lm.isScalar()) return Value.fromMatrix(rm.scalarOp(lm.scalarValue(), '*'))
-          if (rm.isScalar()) return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '*'))
-          return Value.fromMatrix(lm.mul(rm))
-        case TokenType.SLASH: return Value.fromMatrix(lm.scalarOp(rm.scalarValue(), '/'))
-        default: break
-      }
-    }
-    if (expr.kind === 'colon') {
-      const start = expr.start ? this.resolveEnd(expr.start, size).toScalar() : 1
-      const stop = expr.stop ? this.resolveEnd(expr.stop, size).toScalar() : size
-      const step = expr.step ? this.resolveEnd(expr.step, size).toScalar() : 1
-      const count = step !== 0 ? Math.floor((stop - start) / step) + 1 : 0
-      if (count > 0) assertAllocSize(count, 'Range') // empty/NaN ranges fall through harmlessly
-      const vals: number[] = []
-      if (step > 0) for (let v = start; v <= stop + 1e-10; v += step) vals.push(v)
-      else if (step < 0) for (let v = start; v >= stop - 1e-10; v += step) vals.push(v)
-      return Value.fromMatrix(new Matrix(1, vals.length, vals))
-    }
-    return this.evalExpr(expr)
-  }
-
-  private indexCell(c: CellArray, args: Expr[]): Value {
-    if (args.length === 1) {
-      const idx = this.evalExpr(args[0]).toScalar() - 1
-      return c.data[idx] ?? Value.empty()
-    }
-    throw new RuntimeError('Cell indexing with multiple indices not yet supported')
   }
 
   private evalCellIndex(expr: Extract<Expr, { kind: 'cellIndex' }>): Value {
     const obj = this.evalExpr(expr.object)
-    if (!obj.isCell()) throw new RuntimeError('Cell indexing on non-cell')
-    const idx = this.evalExpr(expr.indices[0]).toScalar() - 1
-    return obj.cell().data[idx] ?? Value.empty()
+    const vals = braceValues(obj, this.subscripts(obj, expr.indices))
+    if (vals.length === 1) return vals[0]
+    if (vals.length === 0) return Value.empty()
+    throw new RuntimeError('Comma-separated lists from brace indexing are not supported yet.')
+  }
+
+  /** Substitute the keyword `end` before ordinary evaluation, so floor(end/2) sees a number. */
+  private replaceEnd(expr: Expr, size: number): Expr {
+    switch (expr.kind) {
+      case 'end': return { kind: 'number', value: size, imagValue: 0, isComplex: false }
+      case 'binary': return { ...expr, left: this.replaceEnd(expr.left, size), right: this.replaceEnd(expr.right, size) }
+      case 'unary': return { ...expr, operand: this.replaceEnd(expr.operand, size) }
+      case 'call': return { ...expr, callee: this.replaceEnd(expr.callee, size), args: expr.args.map(a => this.replaceEnd(a, size)) }
+      case 'colon': return {
+        ...expr,
+        start: expr.start ? this.replaceEnd(expr.start, size) : null,
+        stop: expr.stop ? this.replaceEnd(expr.stop, size) : null,
+        step: expr.step ? this.replaceEnd(expr.step, size) : null,
+      }
+      default: return expr
+    }
+  }
+
+  private resolveEnd(expr: Expr, size: number): Value {
+    return this.evalExpr(this.replaceEnd(expr, size))
   }
 
   private evalDot(expr: Extract<Expr, { kind: 'dot' }>): Value {
@@ -668,9 +653,9 @@ export class Interpreter {
 
 function cmpOp(a: Matrix, b: Matrix, fn: (x: number, y: number) => number): Value {
   const rr = Math.max(a.rows, b.rows), cc = Math.max(a.cols, b.cols)
-  const m = new Matrix(rr, cc)
+  const data = new Array<number>(rr * cc)
   for (let r = 0; r < rr; r++)
     for (let c = 0; c < cc; c++)
-      m.set(r, c, fn(a.getWithBroadcast(r, c), b.getWithBroadcast(r, c)))
-  return Value.fromMatrix(m)
+      data[r * cc + c] = fn(a.getWithBroadcast(r, c), b.getWithBroadcast(r, c))
+  return Value.fromMatrix(Matrix.logicalFrom(rr, cc, data))
 }

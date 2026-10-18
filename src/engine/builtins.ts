@@ -290,7 +290,31 @@ reg('diag', (a) => {
   for (let i = 0; i < n; i++) d[i] = m.get(i, i)
   return Value.fromMatrix(new Matrix(1, n, d))
 })
-reg('reshape', (a) => Value.fromMatrix(mat(a[0]).reshape(num(a[1]), num(a[2]))))
+reg('reshape', (a) => {
+  const m = mat(a[0])
+  const emptyDim = (v: Value | undefined) => !!v && v.isMatrix() && v.matrix().numel() === 0
+  let rows: number | null
+  let cols: number | null
+  if (a.length === 2 && a[1].isMatrix() && a[1].matrix().numel() >= 2) {
+    const d = a[1].matrix().data
+    rows = d[0]
+    cols = d[1]
+  } else {
+    rows = emptyDim(a[1]) ? null : num(a[1])
+    cols = a.length < 3 || emptyDim(a[2]) ? null : num(a[2])
+  }
+  const n = m.numel()
+  if (rows === null && cols === null) throw new RuntimeError('reshape: at least one dimension must be specified')
+  if (rows === null) {
+    if (!cols || n % cols !== 0) throw new RuntimeError('Number of elements must not change. Use [] as one of the size inputs to automatically calculate the appropriate size for that dimension.')
+    rows = n / cols
+  }
+  if (cols === null) {
+    if (!rows || n % rows !== 0) throw new RuntimeError('Number of elements must not change. Use [] as one of the size inputs to automatically calculate the appropriate size for that dimension.')
+    cols = n / rows
+  }
+  return Value.fromMatrix(m.reshape(rows, cols))
+})
 reg('repmat', (a) => {
   const m = mat(a[0]), rr = num(a[1]), cc = a.length > 2 ? num(a[2]) : rr
   const R = new Matrix(m.rows * rr, m.cols * cc)
@@ -302,18 +326,52 @@ reg('repmat', (a) => {
 
 // Matrix properties
 reg('size', (a, interp) => {
-  const m = mat(a[0])
-  if (a.length > 1) { const d = num(a[1]); return Value.fromScalar(d === 1 ? m.rows : m.cols) }
+  const [rows, cols] = a[0].dims()
+  if (a.length > 1) { const d = num(a[1]); return Value.fromScalar(d === 1 ? rows : d === 2 ? cols : 1) }
   if (interp.getNargout() >= 2) {
-    const dims = [Value.fromScalar(m.rows), Value.fromScalar(m.cols)]
-    while (dims.length < interp.getNargout()) dims.push(Value.fromScalar(1)) // trailing singleton dims
+    const dims = [Value.fromScalar(rows), Value.fromScalar(cols)]
+    while (dims.length < interp.getNargout()) dims.push(Value.fromScalar(1))
     return Value.fromCell({ rows: 1, cols: dims.length, data: dims })
   }
-  return Value.fromMatrix(new Matrix(1, 2, [m.rows, m.cols]))
+  return Value.fromMatrix(new Matrix(1, 2, [rows, cols]))
 })
-reg('length', (a) => { const m = mat(a[0]); return Value.fromScalar(Math.max(m.rows, m.cols)) })
-reg('numel', (a) => Value.fromScalar(mat(a[0]).numel()))
-reg('isempty', (a) => Value.fromLogical(mat(a[0]).numel() === 0))
+reg('length', (a) => { const [rows, cols] = a[0].dims(); return Value.fromScalar(Math.max(rows, cols)) })
+reg('numel', (a) => Value.fromScalar(a[0].isMatrix() ? a[0].matrix().numel() : a[0].isString() ? a[0].string().length : a[0].isCell() ? a[0].cell().data.length : 1))
+reg('mat2str', (a) => {
+  const m = mat(a[0])
+  if (m.numel() === 0) return Value.fromString('[]')
+  const rows: string[] = []
+  for (let r = 0; r < m.rows; r++) {
+    const vals: string[] = []
+    for (let c = 0; c < m.cols; c++) vals.push(String(m.get(r, c)))
+    rows.push(vals.join(' '))
+  }
+  return Value.fromString('[' + rows.join(';') + ']')
+})
+reg('sub2ind', (a) => {
+  const rows = mat(a[0]).data[0]
+  const r = mat(a[1]), c = mat(a[2])
+  const n = Math.max(r.numel(), c.numel())
+  const data = new Array<number>(n)
+  for (let i = 0; i < n; i++) {
+    const rr = r.data[Math.min(i, r.data.length - 1)]
+    const cc = c.data[Math.min(i, c.data.length - 1)]
+    data[i] = (cc - 1) * rows + rr
+  }
+  return Value.fromMatrix(new Matrix(r.rows, r.cols, data))
+})
+reg('ind2sub', (a, interp) => {
+  const rows = mat(a[0]).data[0]
+  const idx = mat(a[1])
+  const rs = new Array<number>(idx.numel())
+  const cs = new Array<number>(idx.numel())
+  idx.data.forEach((k, i) => { rs[i] = ((k - 1) % rows) + 1; cs[i] = Math.floor((k - 1) / rows) + 1 })
+  const rv = Value.fromMatrix(new Matrix(idx.rows, idx.cols, rs))
+  const cv = Value.fromMatrix(new Matrix(idx.rows, idx.cols, cs))
+  if (interp.getNargout() >= 2) return Value.fromCell({ rows: 1, cols: 2, data: [rv, cv] })
+  return rv
+})
+reg('isempty', (a) => { const [rows, cols] = a[0].dims(); return Value.fromLogical(rows * cols === 0) })
 reg('isscalar', (a) => Value.fromLogical(mat(a[0]).isScalar()))
 reg('isvector', (a) => { const m = mat(a[0]); return Value.fromLogical(m.rows === 1 || m.cols === 1) })
 
@@ -391,9 +449,26 @@ reg('sort', (a, interp) => {
 // String functions
 reg('num2str', (a) => {
   if (a[0].isString()) return a[0]
-  return Value.fromString(String(num(a[0])))
+  const m = mat(a[0])
+  const prec = a.length > 1 ? num(a[1]) : undefined
+  const text = (v: number) => {
+    if (prec !== undefined) {
+      const s = v.toPrecision(prec)
+      return s.includes('e') ? s : s.replace(/\.?0+$/, '')
+    }
+    if (Number.isInteger(v) && Math.abs(v) < 1e15) return String(v)
+    return v.toFixed(4).replace(/\.?0+$/, '')
+  }
+  const lines: string[] = []
+  for (let r = 0; r < m.rows; r++) {
+    const parts: string[] = []
+    for (let c = 0; c < m.cols; c++) parts.push(text(m.get(r, c)))
+    lines.push(parts.join(' '))
+  }
+  return Value.fromString(lines.join('\n'))
 })
-reg('str2num', (a) => Value.fromScalar(parseFloat(a[0].string())))
+reg('int2str', (a) => Value.fromString(String(Math.round(num(a[0])))))
+reg('str2num', (a) => parseNumericText(a[0].string()))
 reg('str2double', (a) => Value.fromScalar(parseFloat(a[0].string())))
 reg('strcat', (a) => Value.fromString(a.map(v => v.isString() ? v.string() : String(num(v))).join('')))
 reg('strsplit', (a) => {
@@ -402,21 +477,7 @@ reg('strsplit', (a) => {
   const c: CellArray = { rows: 1, cols: parts.length, data: parts.map(p => Value.fromString(p)) }
   return Value.fromCell(c)
 })
-reg('sprintf', (a) => {
-  let fmt = a[0].string(); let idx = 1
-  const result = fmt.replace(/%[-+0 #]*\d*\.?\d*[diouxXeEfgGcs%]/g, (match) => {
-    if (match === '%%') return '%'
-    if (idx >= a.length) return match
-    const v = a[idx++]
-    if (match.includes('d') || match.includes('i')) return String(Math.floor(num(v)))
-    if (match.includes('f')) { const prec = match.match(/\.(\d+)/); return num(v).toFixed(prec ? parseInt(prec[1]) : 6) }
-    if (match.includes('e') || match.includes('E')) return num(v).toExponential()
-    if (match.includes('g') || match.includes('G')) return String(num(v))
-    if (match.includes('s')) return v.isString() ? v.string() : String(num(v))
-    return match
-  })
-  return Value.fromString(result)
-})
+reg('sprintf', (a) => Value.fromString(applyFormat(a[0].string(), a.slice(1))))
 reg('upper', (a) => Value.fromString(a[0].string().toUpperCase()))
 reg('lower', (a) => Value.fromString(a[0].string().toLowerCase()))
 reg('strtrim', (a) => Value.fromString(a[0].string().trim()))
@@ -427,18 +488,29 @@ reg('contains', (a) => Value.fromLogical(a[0].string().includes(a[1].string())))
 reg('startsWith', (a) => Value.fromLogical(a[0].string().startsWith(a[1].string())))
 reg('endsWith', (a) => Value.fromLogical(a[0].string().endsWith(a[1].string())))
 reg('replace', (a) => Value.fromString(a[0].string().split(a[1].string()).join(a[2].string())))
+reg('strrep', (a) => {
+  if (a.length < 3) throw new RuntimeError('Not enough input arguments.')
+  return Value.fromString(a[0].string().split(a[1].string()).join(a[2].string()))
+})
+reg('strjoin', (a) => {
+  if (a.length < 1) throw new RuntimeError('Not enough input arguments.')
+  const delim = a.length > 1 ? a[1].string() : ' '
+  return Value.fromString(a[0].cell().data.map(v => !v ? '' : v.isString() ? v.string() : String(num(v))).join(delim))
+})
 
 // Type functions
-reg('class', (a) => Value.fromString(a[0].type === 'matrix' ? 'double' : a[0].type === 'string' ? 'char' : a[0].type))
-reg('isa', (a) => Value.fromLogical(a[0].type === a[1].string()))
-reg('isnumeric', (a) => Value.fromLogical(a[0].isMatrix()))
-reg('ischar', (a) => Value.fromLogical(a[0].isString()))
-reg('islogical', (a) => Value.fromLogical(a[0].isMatrix() && a[0].matrix().data.every(v => v === 0 || v === 1)))
-reg('isinf', (a) => applyElem(a[0], v => !isFinite(v) && !isNaN(v) ? 1 : 0))
-reg('isnan', (a) => applyElem(a[0], v => isNaN(v) ? 1 : 0))
-reg('isfinite', (a) => applyElem(a[0], v => isFinite(v) ? 1 : 0))
+reg('class', (a) => Value.fromString(a[0].className()))
+reg('isa', (a) => Value.fromLogical(a[0].className() === a[1].string()))
+reg('isnumeric', (a) => Value.fromLogical(a[0].isMatrix() && !a[0].matrix().logical))
+reg('ischar', (a) => Value.fromLogical(a[0].isString() || (a[0].isMatrix() && !!a[0].matrix().chars)))
+reg('islogical', (a) => Value.fromLogical(a[0].isMatrix() && !!a[0].matrix().logical))
+reg('isinf', (a) => applyLogical(a[0], v => !isFinite(v) && !isNaN(v) ? 1 : 0))
+reg('isnan', (a) => applyLogical(a[0], v => isNaN(v) ? 1 : 0))
+reg('isfinite', (a) => applyLogical(a[0], v => isFinite(v) ? 1 : 0))
 reg('double', (a) => { if (a[0].isMatrix()) return a[0]; return Value.fromScalar(num(a[0])) })
-reg('logical', (a) => applyElem(a[0], v => v !== 0 ? 1 : 0))
+reg('logical', (a) => applyLogical(a[0], v => v !== 0 ? 1 : 0))
+reg('true', (a) => logicalFill(a, 1))
+reg('false', (a) => logicalFill(a, 0))
 reg('char', (a) => {
   if (a[0].isString()) return a[0]
   const m = mat(a[0]); return Value.fromString(String.fromCharCode(...m.data))
@@ -450,21 +522,15 @@ reg('fprintf', (a, interp) => {
   let fmt: string, startIdx: number
   if (a[0].isMatrix() && a[0].matrix().isScalar() && (num(a[0]) === 1 || num(a[0]) === 2)) { fmt = a[1].string(); startIdx = 2 }
   else { fmt = a[0].string(); startIdx = 1 }
-  let idx = startIdx
-  const result = fmt.replace(/%[-+0 #]*\d*\.?\d*[diouxXeEfgGcs%]/g, (match) => {
-    if (match === '%%') return '%'; if (idx >= a.length) return match
-    const v = a[idx++]
-    if (match.includes('d') || match.includes('i')) return String(Math.floor(num(v)))
-    if (match.includes('f')) { const prec = match.match(/\.(\d+)/); return num(v).toFixed(prec ? parseInt(prec[1]) : 6) }
-    if (match.includes('e') || match.includes('E')) return num(v).toExponential()
-    if (match.includes('g') || match.includes('G')) return String(num(v))
-    if (match.includes('s')) return v.isString() ? v.string() : String(num(v))
-    return match
-  }).replace(/\\n/g, '\n').replace(/\\t/g, '\t')
-  interp.print(result)
+  interp.print(applyFormat(fmt, a.slice(startIdx)).replace(/\\n/g, '\n').replace(/\\t/g, '\t'))
   return Value.empty()
 })
-reg('error', (a) => { throw new RuntimeError(a[0].isString() ? a[0].string() : a[0].display()) })
+reg('error', (a) => {
+  if (a.length >= 2 && a[0].isString() && a[1].isString()) {
+    throw new RuntimeError(applyFormat(a[1].string(), a.slice(2)))
+  }
+  throw new RuntimeError(a[0].isString() ? a[0].string() : a[0].display())
+})
 reg('warning', (a, interp) => { interp.print('Warning: ' + (a[0].isString() ? a[0].string() : a[0].display()) + '\n'); return Value.empty() })
 reg('input', () => Value.fromString('[input not supported in web]'))
 
@@ -575,7 +641,15 @@ reg('whos', (_, interp) => {
   interp.print('  Name           Size       Type\n' + lines.join('\n') + '\n')
   return Value.empty()
 })
-reg('clear', (a, interp) => { if (a.length === 0) interp.currentEnv().clear(); return Value.empty() })
+reg('clear', (a, interp) => {
+  const env = interp.currentEnv()
+  if (a.length === 0 || (a.length === 1 && a[0].isString() && (a[0].string() === 'all' || a[0].string() === 'variables'))) {
+    env.clear()
+    return Value.empty()
+  }
+  for (const v of a) if (v.isString()) env.deleteLocal(v.string())
+  return Value.empty()
+})
 reg('exist', (a, interp) => {
   const n = a[0].string()
   if (interp.currentEnv().has(n)) return Value.fromScalar(1)
@@ -961,6 +1035,94 @@ export function allBuiltinNames(): string[] {
 function applyElem(v: Value, fn: (x: number) => number): Value {
   const m = mat(v)
   return Value.fromMatrix(new Matrix(m.rows, m.cols, m.data.map(fn)))
+}
+
+function applyLogical(v: Value, fn: (x: number) => number): Value {
+  const m = mat(v)
+  return Value.fromMatrix(Matrix.logicalFrom(m.rows, m.cols, m.data.map(fn)))
+}
+
+function logicalFill(a: Value[], fill: number): Value {
+  let rows: number, cols: number
+  if (a.length === 0) { rows = 1; cols = 1 }
+  else if (a.length === 1 && a[0].isMatrix() && a[0].matrix().numel() >= 2) {
+    const d = a[0].matrix().data
+    rows = d[0]; cols = d[1]
+  } else {
+    rows = num(a[0]); cols = a.length > 1 ? num(a[1]) : rows
+  }
+  return Value.fromMatrix(Matrix.logicalFrom(rows, cols, new Array(rows * cols).fill(fill)))
+}
+
+function parseNumericText(text: string): Value {
+  const s = text.trim()
+  if (s.startsWith('[') && s.endsWith(']')) {
+    const body = s.slice(1, -1).trim()
+    if (!body) return Value.fromMatrix(new Matrix(0, 0))
+    const rows = body.split(';').map(row => row.trim().split(/[\s,]+/).filter(Boolean).map(Number))
+    const cols = Math.max(...rows.map(r => r.length))
+    const data = new Array(rows.length * cols).fill(0)
+    rows.forEach((row, r) => row.forEach((v, c) => { data[r * cols + c] = v }))
+    return Value.fromMatrix(new Matrix(rows.length, cols, data))
+  }
+  const n = parseFloat(s)
+  return Number.isNaN(n) ? Value.empty() : Value.fromScalar(n)
+}
+
+const FORMAT_SPEC = /%([-+0 #]*)(\d*)(?:\.(\d+))?([diouxXeEfgGcs%])/g
+
+function applyFormat(fmt: string, args: Value[]): string {
+  const items: Value[] = []
+  for (const v of args) {
+    if (v.isMatrix() && v.matrix().numel() !== 1) {
+      for (const x of v.matrix().columnMajor()) items.push(Value.fromScalar(x))
+    } else items.push(v)
+  }
+  if (!fmt.includes('%')) return fmt
+  let idx = 0
+  let out = ''
+  for (let pass = 0; pass < 10000; pass++) {
+    let consumed = false
+    out += fmt.replace(FORMAT_SPEC, (match, flags: string, width: string, prec: string | undefined, type: string) => {
+      if (type === '%') return '%'
+      if (idx >= items.length) return match
+      consumed = true
+      return formatOne(items[idx++], flags, width, prec, type)
+    })
+    if (!consumed || idx >= items.length) break
+  }
+  return out
+}
+
+function formatOne(v: Value, flags: string, width: string, prec: string | undefined, type: string): string {
+  const w = width ? parseInt(width, 10) : 0
+  const p = prec !== undefined ? parseInt(prec, 10) : undefined
+  let body: string
+  if (type === 'd' || type === 'i' || type === 'u') body = String(Math.trunc(num(v)))
+  else if (type === 'o') body = Math.trunc(num(v)).toString(8)
+  else if (type === 'x' || type === 'X') {
+    body = (Math.trunc(num(v)) >>> 0).toString(16)
+    if (type === 'X') body = body.toUpperCase()
+  } else if (type === 'f' || type === 'F') body = num(v).toFixed(p ?? 6)
+  else if (type === 'e' || type === 'E') body = formatExponential(num(v), p ?? 6, type === 'E')
+  else if (type === 'g' || type === 'G') body = String(num(v))
+  else if (type === 'c') body = v.isString() ? v.string() : String.fromCharCode(Math.trunc(num(v)))
+  else if (type === 's') body = v.isString() ? v.string() : String(num(v))
+  else body = ''
+  if (w > body.length) {
+    if (flags.includes('-')) return body.padEnd(w)
+    if (flags.includes('0') && /[diouxXeEfFgG]/.test(type)) return body.padStart(w, '0')
+    return body.padStart(w)
+  }
+  return body
+}
+
+function formatExponential(v: number, digits: number, upper: boolean): string {
+  const raw = v.toExponential(digits)
+  const m = raw.match(/^([+-]?\d(?:\.\d+)?)e([+-])(\d+)$/i)
+  if (!m) return raw
+  const body = `${m[1]}e${m[2]}${m[3].padStart(2, '0')}`
+  return upper ? body.toUpperCase() : body
 }
 
 function generateRange(start: number, step: number, stop: number): Value {

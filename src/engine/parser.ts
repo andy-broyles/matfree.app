@@ -191,8 +191,7 @@ export class Parser {
         this.advance()
         if (this.check(TokenType.ASSIGN)) {
           this.advance(); const value = this.parseExpression()
-          const pr = !this.match(TokenType.SEMICOLON); if (this.check(TokenType.NEWLINE)) this.advance()
-          return { kind: 'multiAssign', targets: names, value, printResult: pr }
+          return { kind: 'multiAssign', targets: names, value, printResult: this.statementPrints() }
         }
       }
       this.pos = saved
@@ -200,11 +199,17 @@ export class Parser {
     const expr = this.parseExpression()
     if (this.check(TokenType.ASSIGN)) {
       this.advance(); const value = this.parseExpression()
-      const pr = !this.match(TokenType.SEMICOLON); if (this.check(TokenType.NEWLINE)) this.advance()
-      return { kind: 'assign', target: expr, value, printResult: pr }
+      return { kind: 'assign', target: expr, value, printResult: this.statementPrints() }
     }
-    const pr = !this.match(TokenType.SEMICOLON); if (this.check(TokenType.NEWLINE)) this.advance()
-    return { kind: 'expr', expression: expr, printResult: pr }
+    return { kind: 'expr', expression: expr, printResult: this.statementPrints() }
+  }
+
+  /** A comma ends a statement and still prints; a semicolon ends it and suppresses output. */
+  private statementPrints(): boolean {
+    const prints = !this.match(TokenType.SEMICOLON)
+    this.match(TokenType.COMMA)
+    if (this.check(TokenType.NEWLINE)) this.advance()
+    return prints
   }
 
   // Expression precedence chain
