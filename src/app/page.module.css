@@ -80,5 +80,7 @@
 @media (max-width: 640px) {
   .heroTitle { font-size: 32px; }
   .heroSub { font-size: 16px; }
-  .navLinks a:not(.navCta) { display: none; }
+  .navInner { padding: 0 12px; }
+  .navLinks { gap: 12px; }
+  .navCta { padding: 6px 12px; }
 }

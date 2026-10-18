@@ -143,10 +143,13 @@ function PlaygroundInner() {
 
   const termRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const lastRunRef = useRef('')
+  const [showExamples, setShowExamples] = useState(false)
 
   useEffect(() => {
     try { const h = localStorage.getItem('mf_history'); if (h) setHistory(JSON.parse(h)) } catch {}
     try { const c = localStorage.getItem('mf_editor'); if (c) setEditorCode(c) } catch {}
+    if (window.matchMedia('(max-width: 900px)').matches) setShowVars(false)
     setItems([
       { type: 'output', text: 'MatFree v0.5.0 \u2014 Free Scientific Computing Environment\n' },
       { type: 'info', text: 'Ctrl+K: Command palette  |  Tab: Autocomplete  |  help(\'topic\'): Documentation\n\n' },
@@ -181,6 +184,7 @@ function PlaygroundInner() {
 
   const executeCode = useCallback((code: string, opts: { echo?: boolean; strings?: Record<string, string> } = {}): Promise<RunResult> => {
     if (!code.trim()) return Promise.resolve({ status: 'ok' })
+    lastRunRef.current = code
     let started = false
     return run(code, {
       onStart: () => { started = true; if (opts.echo !== false) pushItems([{ type: 'input', text: code }]) },
@@ -245,7 +249,7 @@ function PlaygroundInner() {
     if (e.key === 'ArrowUp') { e.preventDefault(); const idx = Math.min(histIdx + 1, history.length - 1); setHistIdx(idx); if (history[idx]) setInput(history[idx]) }
     if (e.key === 'ArrowDown') { e.preventDefault(); const idx = Math.max(histIdx - 1, -1); setHistIdx(idx); setInput(idx >= 0 ? history[idx] : '') }
     if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); setItems([]) }
-    if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input || editorCode) }
+    if (e.key === 's' && e.ctrlKey) { e.preventDefault(); shareCode(input.trim() || lastRunRef.current) }
     if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); setCmdPaletteOpen(true) }
   }, [handleSubmit, histIdx, history, input, editorCode, acVisible, acIdx, acWord, varNames, applyAutocomplete, updateAcWord])
 
@@ -261,7 +265,7 @@ function PlaygroundInner() {
   }, [runEditor, editorCode])
 
   const shareCode = useCallback((code: string) => {
-    if (!code.trim()) return
+    if (!code.trim()) { setShareMsg('Empty'); setTimeout(() => setShareMsg(''), 2000); return }
     const url = `${window.location.origin}/playground?code=${encodeURIComponent(code)}`
     navigator.clipboard.writeText(url).then(() => { setShareMsg('Copied!'); setTimeout(() => setShareMsg(''), 2000) })
     .catch(() => { setShareMsg('Failed'); setTimeout(() => setShareMsg(''), 2000) })
@@ -320,7 +324,13 @@ function PlaygroundInner() {
     }
   }, [loadUrlInput, loadUrlVar, executeCode, pushItems])
 
+  const sourceCode = useCallback(() => {
+    if (isEditorMode) return editorCode
+    return input.trim() || lastRunRef.current
+  }, [isEditorMode, editorCode, input])
+
   const handleExampleClick = useCallback((code: string) => {
+    setShowExamples(false)
     if (isEditorMode) setEditorCode(code); else executeCode(code)
   }, [isEditorMode, executeCode])
 
@@ -336,6 +346,9 @@ function PlaygroundInner() {
           <button className={`${styles.tab} ${isEditorMode ? styles.tabActive : ''}`} onClick={() => setIsEditorMode(true)}>Editor</button>
         </div>
         <div className={styles.headerActions}>
+          <button className={`${styles.actionBtn} ${styles.examplesToggle}`} onClick={() => { setShowFiles(false); setShowExamples(v => !v) }}>
+            Examples
+          </button>
           <button className={styles.actionBtn} onClick={() => setCmdPaletteOpen(true)} title="Command Palette (Ctrl+K)">
             Search
           </button>
@@ -358,7 +371,7 @@ function PlaygroundInner() {
           </button>
           <a href="/notebook" className={styles.actionBtn} style={{ textDecoration: 'none' }}>Notebook</a>
           <button className={styles.actionBtn} onClick={() => setShowShortcuts(s => !s)}>Keys</button>
-          <button className={styles.actionBtn} onClick={() => shareCode(isEditorMode ? editorCode : input)}>
+          <button className={styles.actionBtn} onClick={() => shareCode(sourceCode())}>
             {shareMsg || 'Share'}
           </button>
           <button className={styles.resetBtn} onClick={resetSession}>Reset</button>
@@ -374,7 +387,7 @@ function PlaygroundInner() {
 
       <div className={styles.body}>
         {showFiles ? (
-          <aside className={styles.sidebar}>
+          <aside className={`${styles.sidebar} ${styles.sidebarOpen}`}>
             <FileTree
               visible={showFiles}
               onOpen={(f: MFFile) => { setEditorCode(f.content); setFileName(f.name); setIsEditorMode(true) }}
@@ -384,7 +397,7 @@ function PlaygroundInner() {
             />
           </aside>
         ) : (
-          <aside className={styles.sidebar}>
+          <aside className={`${styles.sidebar} ${showExamples ? styles.sidebarOpen : ''}`}>
             {EXAMPLES.map((cat, ci) => (
               <div key={ci} className={styles.sideSection}>
                 <h3>{cat.cat}</h3>
@@ -401,6 +414,7 @@ function PlaygroundInner() {
           onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
+          onClick={() => setShowExamples(false)}
         >
           {isDragOver && <div className={styles.dropOverlay}>Drop CSV file to import</div>}
 
@@ -545,12 +559,17 @@ function PlaygroundInner() {
               </div>
             </div>
             <pre style={{ background: '#0a0a0f', padding: 16, borderRadius: 8, color: '#c4c4d8', fontSize: 13, fontFamily: 'var(--font-mono)', lineHeight: 1.5, overflow: 'auto', whiteSpace: 'pre-wrap', maxHeight: 400 }}>
-              {(() => { try { return exportLang === 'julia' ? toJulia(editorCode || 'x = 1') : toPython(editorCode || 'x = 1') } catch (e: any) { return `% Export error: ${e.message}\n% Make sure your code is valid.` } })()}
+              {(() => {
+                const code = sourceCode().trim()
+                if (!code) return '% Write or run some code, then export it.'
+                try { return exportLang === 'julia' ? toJulia(code) : toPython(code) } catch (e: any) { return `% Export error: ${e.message}\n% Make sure your code is valid.` }
+              })()}
             </pre>
             <button onClick={() => {
               try {
-                const code = exportLang === 'julia' ? toJulia(editorCode || 'x = 1') : toPython(editorCode || 'x = 1')
-                navigator.clipboard.writeText(code)
+                const code = sourceCode().trim()
+                if (!code) return
+                navigator.clipboard.writeText(exportLang === 'julia' ? toJulia(code) : toPython(code))
               } catch {}
             }} style={{ marginTop: 8, background: '#4f46e5', border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Copy to Clipboard</button>
           </div>
