@@ -85,7 +85,7 @@ export default function Home() {
             <li>
               <span className={styles.stepNum}>4</span>
               <span className={styles.stepBody}>
-                <strong>See results</strong> — Output appears below the editor. Plots show in the plot panel on the right. Use the <strong>Variable explorer</strong> to inspect values.
+                <strong>See results</strong> — Output and plots appear below the editor. Use the <strong>Variable explorer</strong> on the right to inspect values.
               </span>
             </li>
             <li>

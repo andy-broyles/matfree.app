@@ -17,7 +17,7 @@ import MathEquationEditor from '@/components/MathEquationEditor'
 import { toPython, toJulia } from '@/engine/transpiler'
 import { useEngineSession, useElapsedSeconds, hasTextSelection } from '@/lib/useEngineSession'
 import type { RunResult } from '@/lib/engineSession'
-import { appendMerged, classifyOutput } from '@/lib/outputFormat'
+import { appendMerged, classifyOutput, upsertPlot } from '@/lib/outputFormat'
 import { csvToAssignment, isValidIdentifier } from '@/lib/csvImport'
 
 interface OutputItem {
@@ -185,7 +185,7 @@ function PlaygroundInner() {
     return run(code, {
       onStart: () => { started = true; if (opts.echo !== false) pushItems([{ type: 'input', text: code }]) },
       onOutput: texts => pushItems(texts.map(toOutputItem)),
-      onPlot: figure => pushItems([{ type: 'plot', figure }]),
+      onPlot: figure => setItems(prev => upsertPlot(prev, figure, 'plot')),
     }, opts.strings).then(result => {
       if (result.status === 'error') pushItems([{ type: 'error', text: result.error + '\n' }])
       else if (result.status === 'stopped' && result.reason === 'stop' && started) pushItems([{ type: 'info', text: stoppedMessage(result.workspaceCleared) }])

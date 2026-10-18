@@ -1,4 +1,5 @@
 import katex from 'katex'
+import type { PlotFigure } from '@/engine/plot'
 import type { Plot3DData } from '@/components/Plot3D'
 
 export type ClassifiedOutput =
@@ -33,6 +34,21 @@ export function classifyOutput(text: string): ClassifiedOutput {
     }
   }
   return { type: 'text', text }
+}
+
+/**
+ * Adds a figure, or replaces the card already showing that figure.
+ * title, xlabel, and ylabel emit the same figure again; those updates belong on one chart.
+ */
+export function upsertPlot<T extends { type: string; figure?: PlotFigure }>(prev: T[], figure: PlotFigure, plotType: T['type']): T[] {
+  let idx = -1
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (prev[i].type === plotType && prev[i].figure?.id === figure.id) { idx = i; break }
+  }
+  if (idx < 0) return [...prev, { type: plotType, figure } as T]
+  const next = prev.slice()
+  next[idx] = { ...next[idx], figure }
+  return next
 }
 
 /** Appends items, merging consecutive text entries so long-running prints stay one DOM node. */

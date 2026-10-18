@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { csvToAssignment, isValidIdentifier } from '../csvImport'
-import { appendMerged, classifyOutput } from '../outputFormat'
-import { Interpreter } from '@/engine'
+import { appendMerged, classifyOutput, upsertPlot } from '../outputFormat'
+import { Interpreter, Value } from '@/engine'
+import type { PlotFigure } from '@/engine/plot'
+import { summarizeValue } from '@/engine/workspace'
 
 describe('csvToAssignment', () => {
   it('skips header rows, keeps missing cells as NaN, and builds runnable code', () => {
@@ -49,5 +51,24 @@ describe('output formatting', () => {
     items = appendMerged<Item>(items, [{ type: 'plot' }, { type: 'output', text: 'c\n' }], 'output')
     items = appendMerged<Item>(items, [{ type: 'output', text: 'd\n' }], 'output')
     expect(items).toEqual([{ type: 'output', text: 'a\nb\n' }, { type: 'plot' }, { type: 'output', text: 'c\nd\n' }])
+  })
+
+  it('replaces a figure when title and labels update it', () => {
+    type Item = { type: 'output' | 'plot'; figure?: PlotFigure }
+    const first = { id: 1, title: 'Sine Wave' } as PlotFigure
+    const titled = { id: 1, title: 'Sine Wave', xlabel: 'x' } as PlotFigure
+    const other = { id: 2, title: 'Other' } as PlotFigure
+    let items: Item[] = [{ type: 'output' }]
+    items = upsertPlot(items, first, 'plot')
+    items = upsertPlot(items, titled, 'plot')
+    items = upsertPlot(items, other, 'plot')
+    expect(items.map(item => item.figure?.id)).toEqual([undefined, 1, 2])
+    expect(items[1].figure).toEqual(titled)
+  })
+
+  it('shows a symbolic result without the internal marker', () => {
+    const summary = summarizeValue('ans', Value.fromString('__sym:6*x + 4'))
+    expect(summary.preview).toBe("'6*x + 4'")
+    expect(summary.size).toBe('1x7')
   })
 })

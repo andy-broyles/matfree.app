@@ -13,7 +13,7 @@ import { getAllNotebooks, saveNotebook, deleteNotebook, loadDraft, saveDraft } f
 import type { MFNotebook, NotebookDraft, StoredCell } from '@/lib/notebookStorage'
 import { useEngineSession, useElapsedSeconds, hasTextSelection } from '@/lib/useEngineSession'
 import type { RunResult } from '@/lib/engineSession'
-import { appendMerged, classifyOutput } from '@/lib/outputFormat'
+import { appendMerged, classifyOutput, upsertPlot } from '@/lib/outputFormat'
 import { csvToAssignment, isValidIdentifier } from '@/lib/csvImport'
 import { decodeNotebook, encodeNotebook, sharePayloadFromHash, SHARE_HASH_KEY, type SharedNotebook } from '@/lib/notebookShare'
 
@@ -208,7 +208,7 @@ export default function NotebookPage() {
         setCells(prev => prev.map(c => (c.id === cellId ? { ...c, status: 'running', output: [] } : c)))
       },
       onOutput: texts => appendToCell(cellId, texts.map(toCellOutput)),
-      onPlot: figure => appendToCell(cellId, [{ type: 'plot', figure }]),
+      onPlot: figure => setCells(prev => prev.map(c => (c.id === cellId ? { ...c, output: upsertPlot(c.output, figure, 'plot') } : c))),
     }).then(result => {
       activeCells.current.delete(cellId)
       const extra: CellOutput[] = []

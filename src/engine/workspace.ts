@@ -54,7 +54,8 @@ export function summarizeValue(name: string, v: Value): VarSummary {
     return { name, typeLabel: 'double', size: `${m.rows}x${m.cols}`, preview }
   }
   if (v.isString()) {
-    const s = v.string()
+    const raw = v.string()
+    const s = raw.startsWith('__sym:') ? raw.slice(6) : raw
     return { name, typeLabel: 'char', size: `1x${s.length}`, preview: `'${s.length > 20 ? s.slice(0, 20) + '...' : s}'` }
   }
   if (v.isStruct()) {
